@@ -9,6 +9,7 @@ endif()
 
 add_library(core
     src/Image.cpp
+    src/ImageLoad.cpp
 )
 
 target_include_directories(core PUBLIC

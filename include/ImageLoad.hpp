@@ -4,7 +4,7 @@
 
 namespace core {
 
-bool loadImageGray(const std::string& path, Image& outImage);
+bool loadImage(std::string& path, Image& outImage);
 bool saveImagePNG(const std::string& path, const Image& image);
 
 }
