@@ -11,8 +11,11 @@
 
 #include <GLFW/glfw3.h>
 
-#include "Image.hpp"
-#include "ImageLoad.hpp"
+#include "AppState.hpp"
+#include "ImageTexture.hpp"
+#include "LeftPanel.hpp"
+#include "CenterPanel.hpp"
+#include "RightPanel.hpp"
 
 void error_callback(int error, const char* description) {
     std::cerr << "Erro GLFW [" << error << "]: " << description << std::endl;
@@ -32,7 +35,7 @@ int main() {
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
     // Criar jenela nativa
-    GLFWwindow* window = glfwCreateWindow(800, 600, "PhotoSell - ImGui Exemplo", nullptr, nullptr);
+    GLFWwindow* window = glfwCreateWindow(1200, 800, "PhotoSell", nullptr, nullptr);
     if (!window) {
         std::cerr << "Falha ao criar a janela" << std::endl;
         glfwTerminate();
@@ -51,9 +54,12 @@ int main() {
 
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init("#version 330");
+
+    ui::AppState state;
+    GLuint texture = 0;
+    glGenTextures(1, &texture);
+    state.textureId = texture;
     
-    char path[512] = "";
-    bool carregou;
     // main loop
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
@@ -62,20 +68,35 @@ int main() {
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
 
-        ImGui::Begin("oiii");                          
-        std::string pathString(path);
-        ImGui::InputText("Path:", path, sizeof(path));
-        bool loadResult = ImGui::Button("Carregar Imagem");
-        if(loadResult){
-            core::Image loadImage(0,0,255);
-            if(core::loadImage(pathString, loadImage)){
-                std::cerr << "imagem carregada" << std::endl;
-            }else{
-            }
+        ImGuiViewport* viewport = ImGui::GetMainViewport();
+        ImGui::SetNextWindowPos(viewport->WorkPos);
+        ImGui::SetNextWindowSize(viewport->WorkSize);
+        ImGuiWindowFlags containerFlags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                                           ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse |
+                                           ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_MenuBar;
+        ImGui::Begin("PhotoSell", nullptr, containerFlags);
+
+        if (ImGui::BeginMenuBar()) {
+            ImGui::Text("PhotoSell - Processador de Imagens");
+            ImGui::EndMenuBar();
         }
-        
+
+        float fullWidth = ImGui::GetContentRegionAvail().x;
+        float fullHeight = ImGui::GetContentRegionAvail().y - 40.0f; 
+        float sideWidth = fullWidth * 0.22f;
+        float centerWidth = fullWidth - 2.0f * sideWidth - 16.0f;
+
+        ui::RenderLeftPanel(state, sideWidth, fullHeight);
+        ImGui::SameLine();
+        ui::RenderCenterPanel(state, centerWidth, fullHeight);
+        ImGui::SameLine();
+        ui::RenderRightPanel(state, sideWidth, fullHeight);
+
+        ImGui::Dummy(ImVec2(0, 4));
+        ImGui::TextWrapped("%s", state.statusMessage.c_str());
+
         if (ImGui::Button("Fechar Programa")) {
-            glfwSetWindowShouldClose(window, GLFW_TRUE); 
+            glfwSetWindowShouldClose(window, GLFW_TRUE);
         }
         
         ImGui::End();
@@ -89,7 +110,7 @@ int main() {
 
         glfwSwapBuffers(window);
     }
-
+    glDeleteTextures(1, &texture);
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();

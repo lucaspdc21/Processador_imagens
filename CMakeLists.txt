@@ -10,10 +10,15 @@ endif()
 add_library(core
     src/Image.cpp
     src/ImageLoad.cpp
+    src/ImageQuantization.cpp
+    src/ImageResample.cpp
+    src/ImageStats.cpp
+    src/ImageMetrics.cpp
 )
 
 target_include_directories(core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/ui/include
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb
 )
 
@@ -55,6 +60,19 @@ target_include_directories(imgui PUBLIC
 )
 
 target_link_libraries(imgui PUBLIC glfw OpenGL::GL)
+set(TINYFD_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/tinyfiledialogs)
+add_library(tinyfiledialogs STATIC
+    ${TINYFD_DIR}/tinyfiledialogs.c
+)
+target_include_directories(tinyfiledialogs PUBLIC ${TINYFD_DIR})
 
-add_executable(photosell_gui ui/main.cpp)
-target_link_libraries(photosell_gui PRIVATE core imgui)
+add_executable(photosell_gui
+    ui/main.cpp
+    ui/AppState.cpp
+    ui/ImageTexture.cpp
+    ui/LeftPanel.cpp
+    ui/CenterPanel.cpp
+    ui/RightPanel.cpp
+)
+target_include_directories(photosell_gui PRIVATE ${TINYFD_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/ui)
+target_link_libraries(photosell_gui PRIVATE core imgui tinyfiledialogs)

@@ -34,4 +34,26 @@ namespace core{
     return true;
 
     }
+
+    bool saveImagePNG(std::string& path, Image& image){
+        int height = image.getRows();
+        int width = image.getCols();
+        if (height <= 0 || width <= 0) {
+            return false;
+        }
+
+        std::vector<unsigned char> pixels(static_cast<size_t>(height) * width);
+        auto& data = image.getData();
+        for (int row = 0; row < height; ++row) {
+            for (int col = 0; col < width; ++col) {
+                int v = data[row][col];
+                if (v < 0) v = 0;
+                if (v > 255) v = 255;
+                pixels[static_cast<size_t>(row) * width + col] = static_cast<unsigned char>(v);
+            }
+        }
+
+        int result = stbi_write_png(path.c_str(), width, height, 1, pixels.data(), width);
+        return result != 0;
+    }
 }

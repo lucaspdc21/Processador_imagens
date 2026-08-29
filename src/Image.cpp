@@ -1,8 +1,8 @@
 #include "Image.hpp"
 
 namespace core {
-Image::Image(int rows, int cols, int maxIntensity)
-    : rows(rows), cols(cols), maxIntensity(maxIntensity){
+Image::Image(int rows, int cols, int maxIntensity, int bitsPerPixel, double dpi)
+    : rows(rows), cols(cols), maxIntensity(maxIntensity), bitsPerPixel(bitsPerPixel), dpi(dpi){
         data = std::vector<std::vector<int>>(rows, std::vector<int>(cols,0));
 }
 
