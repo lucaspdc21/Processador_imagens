@@ -1,6 +1,7 @@
 #pragma once
 #include <string>
 #include "Image.hpp"
+#include "ImageResample.hpp"
 
 namespace ui {
 
@@ -16,6 +17,7 @@ namespace ui {
         float dpiValue = 72.0f;     // dpi selecionado na interface
         int resamplePercent = 100;  // % do tamanho original para reamostragem
 
+        core::resampleType interpolationMethod = core::resampleType::Nearest;
         std::string statusMessage = "Nenhuma imagem carregada.";
 
         // Carrega uma imagem do disco e reseta os parametros da interface.

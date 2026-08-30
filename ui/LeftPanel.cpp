@@ -11,12 +11,13 @@ void RenderLeftPanel(AppState& state, float width, float height) {
     ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Métodos e funções");
     ImGui::Separator();
 
-    if (ImGui::Button("Selecionar imagem...", ImVec2(-1, 0))) {
+    if (ImGui::Button("Selecionar imagem", ImVec2(-1, 0))) {
         const char* filters[] = { "*.png", "*.jpg", "*.jpeg", "*.bmp", "*.tga" };
         const char* selected = tinyfd_openFileDialog(
             "Selecionar imagem", "", 5, filters, "Imagens", 0);
         if (selected != nullptr) {
-            if (state.loadFromPath(std::string(selected))) {
+            std::string path(selected);
+            if (state.loadFromPath(path)) {
                 RefreshTexture(state);
             }
         }
@@ -24,12 +25,13 @@ void RenderLeftPanel(AppState& state, float width, float height) {
 
     ImGui::BeginDisabled(!state.hasImage);
 
-    if (ImGui::Button("Salvar como PNG...", ImVec2(-1, 0))) {
+    if (ImGui::Button("Salvar como PNG", ImVec2(-1, 0))) {
         const char* filters[] = { "*.png" };
         const char* savePath = tinyfd_saveFileDialog(
             "Salvar imagem", "saida.png", 1, filters, "PNG");
         if (savePath != nullptr) {
-            state.saveToPath(std::string(savePath));
+            std::string path(savePath);
+            state.saveToPath(path);
         }
     }
 
@@ -46,7 +48,14 @@ void RenderLeftPanel(AppState& state, float width, float height) {
     ImGui::Dummy(ImVec2(0, 10));
     ImGui::Text("Resolução espacial (reamostragem)");
     ImGui::SetNextItemWidth(-1);
-    ImGui::SliderInt("##resample", &state.resamplePercent, 5, 100, "%d%% do tamanho original");
+    ImGui::SliderInt("##resample", &state.resamplePercent, 5, 500, "%d%% do tamanho original");
+    ImGui::Text("Interpolação");
+    int method = static_cast<int>(state.interpolationMethod);
+    ImGui::RadioButton("Vizinho mais próximo", &method, 0);
+    ImGui::RadioButton("Bilinear", &method, 1);
+    ImGui::RadioButton("Bicúbica", &method, 2);
+    state.interpolationMethod = static_cast<core::resampleType>(method);
+    
     if (ImGui::Button("Aplicar reamostragem", ImVec2(-1, 0))) {
         state.applyResample();
         RefreshTexture(state);

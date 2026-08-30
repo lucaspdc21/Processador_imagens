@@ -3,6 +3,12 @@
 
 namespace core {
 
-    void resample(Image& img, int newRows, int newCols);
+    enum class resampleType{
+        Nearest,
+        Bilinear,
+        Bicubica
+    };
+
+    void resample(Image& img, int newRows, int newCols, resampleType interpolacao = resampleType::Nearest);
 
 }

@@ -49,12 +49,15 @@ void AppState::applyResample() {
     // Parte sempre da original para nao acumular perdas de chamadas anteriores.
     workingImage = originalImage;
     core::quantize(workingImage, bitsPerPixel);
-    core::resample(workingImage, newRows, newCols);
-    // Amplia de volta ao tamanho original para tornar visivel o efeito de
-    // baixa resolucao espacial (pixelizacao), como no experimento da teoria.
-    core::resample(workingImage, originalImage.getRows(), originalImage.getCols());
-
-    statusMessage = "Reamostragem aplicada (efeito de baixa resolução espacial).";
+    core::resample(workingImage, newRows, newCols, interpolationMethod);
+    if (resamplePercent < 100) {
+        // Amplia de volta ao tamanho original para tornar visivel o efeito de
+        // baixa resolucao espacial (pixelizacao)
+        //core::resample(workingImage, originalImage.getRows(), originalImage.getCols(), interpolationMethod);
+        statusMessage = "Reamostragem aplicada (efeito de baixa resolução espacial).";
+    } else {
+        statusMessage = "Reamostragem aplicada (imagem ampliada por interpolação).";
+    }
 }
 
 void AppState::applyDpi(float newDpi) {
