@@ -16,6 +16,7 @@
 #include "LeftPanel.hpp"
 #include "CenterPanel.hpp"
 #include "RightPanel.hpp"
+#include "CompareWindow.hpp"
 
 void error_callback(int error, const char* description) {
     std::cerr << "Erro GLFW [" << error << "]: " << description << std::endl;
@@ -100,6 +101,11 @@ int main() {
         }
         
         ImGui::End();
+
+        if (state.showCompareWindow) {
+            ui::RenderCompareWindow(state);
+        }
+
         ImGui::Render();
         int display_w, display_h;
         glfwGetFramebufferSize(window, &display_w, &display_h);

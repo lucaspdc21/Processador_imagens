@@ -14,6 +14,7 @@ add_library(core
     src/ImageResample.cpp
     src/ImageStats.cpp
     src/ImageMetrics.cpp
+    src/ImageIntensity.cpp
 )
 
 target_include_directories(core PUBLIC
@@ -36,6 +37,7 @@ set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
+#set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
 if(UNIX AND NOT APPLE)
     set(GLFW_BUILD_WAYLAND OFF CACHE BOOL "" FORCE)
     set(GLFW_BUILD_X11 ON CACHE BOOL "" FORCE)
@@ -73,6 +75,7 @@ add_executable(photosell_gui
     ui/LeftPanel.cpp
     ui/CenterPanel.cpp
     ui/RightPanel.cpp
+    ui/CompareWindow.cpp
 )
 target_include_directories(photosell_gui PRIVATE ${TINYFD_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/ui)
 target_link_libraries(photosell_gui PRIVATE core imgui tinyfiledialogs)

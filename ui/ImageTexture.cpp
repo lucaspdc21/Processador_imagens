@@ -5,13 +5,15 @@
 
 namespace ui {
 
-void RefreshTexture(AppState& state) {
-    if (!state.hasImage) return;
-
-    core::Image& image = state.workingImage;
+unsigned int UploadImageToTexture(core::Image& image, unsigned int existingTextureId) {
     int rows = image.getRows();
     int cols = image.getCols();
-    if (rows <= 0 || cols <= 0) return;
+    if (rows <= 0 || cols <= 0) return existingTextureId;
+
+    GLuint texture = static_cast<GLuint>(existingTextureId);
+    if (texture == 0) {
+        glGenTextures(1, &texture);
+    }
 
     std::vector<unsigned char> rgba(static_cast<size_t>(rows) * cols * 4);
     const auto& data = image.getData();
@@ -26,7 +28,6 @@ void RefreshTexture(AppState& state) {
         }
     }
 
-    GLuint texture = static_cast<GLuint>(state.textureId);
     glBindTexture(GL_TEXTURE_2D, texture);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
@@ -34,6 +35,13 @@ void RefreshTexture(AppState& state) {
     //glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     //glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, cols, rows, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
+
+    return static_cast<unsigned int>(texture);
+}
+
+void RefreshTexture(AppState& state) {
+    if (!state.hasImage) return;
+    state.textureId = UploadImageToTexture(state.workingImage, state.textureId);
 }
 
 }
