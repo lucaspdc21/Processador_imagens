@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.15)
-project(PhotoSell LANGUAGES CXX C)
+project(Processador LANGUAGES CXX C)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -68,7 +68,7 @@ add_library(tinyfiledialogs STATIC
 )
 target_include_directories(tinyfiledialogs PUBLIC ${TINYFD_DIR})
 
-add_executable(photosell_gui
+add_executable(processador_gui
     ui/main.cpp
     ui/AppState.cpp
     ui/ImageTexture.cpp
@@ -77,5 +77,5 @@ add_executable(photosell_gui
     ui/RightPanel.cpp
     ui/CompareWindow.cpp
 )
-target_include_directories(photosell_gui PRIVATE ${TINYFD_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/ui)
-target_link_libraries(photosell_gui PRIVATE core imgui tinyfiledialogs)
+target_include_directories(processador_gui PRIVATE ${TINYFD_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/ui)
+target_link_libraries(processador_gui PRIVATE core imgui tinyfiledialogs)

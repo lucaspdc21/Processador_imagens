@@ -36,7 +36,7 @@ int main() {
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
     // Criar jenela nativa
-    GLFWwindow* window = glfwCreateWindow(1200, 800, "PhotoSell", nullptr, nullptr);
+    GLFWwindow* window = glfwCreateWindow(1200, 800, "Processador", nullptr, nullptr);
     if (!window) {
         std::cerr << "Falha ao criar a janela" << std::endl;
         glfwTerminate();
@@ -75,10 +75,10 @@ int main() {
         ImGuiWindowFlags containerFlags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
                                            ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse |
                                            ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_MenuBar;
-        ImGui::Begin("PhotoSell", nullptr, containerFlags);
+        ImGui::Begin("Processador", nullptr, containerFlags);
 
         if (ImGui::BeginMenuBar()) {
-            ImGui::Text("PhotoSell - Processador de Imagens");
+            ImGui::Text("Processador de Imagens");
             ImGui::EndMenuBar();
         }
 
