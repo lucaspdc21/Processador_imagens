@@ -49,6 +49,23 @@ void negative(Image& img) {
     }
 }
 
+void brightness(Image& img, double k) {
+    if (k < 0.0) k = 0.0;
+
+    // Tabela indexada: lut[r] = T(r) = k * r, com saturacao em [0, 255]
+    int lut[256];
+    for (int r = 0; r < 256; ++r) {
+        lut[r] = clampByte(k * static_cast<double>(r));
+    }
+
+    for (int row = 0; row < img.getRows(); ++row) {
+        for (int col = 0; col < img.getCols(); ++col) {
+            int r = std::max(0, std::min(img.pixel(row, col), 255));
+            img.pixel(row, col) = lut[r];
+        }
+    }
+}
+
 double computeAutoLogConstant(Image& img) {
     int maxVal = 0;
     bool any = false;

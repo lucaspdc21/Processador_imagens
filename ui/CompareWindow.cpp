@@ -3,6 +3,7 @@
 #include "ImageIntensity.hpp"
 #include "imgui.h"
 #include <cstdint>
+#include <cstdio>
 #include <string>
 #include <utility>
 #include <vector>
@@ -18,13 +19,19 @@ void BuildCompareTextures(AppState& state) {
     core::Image& base = state.workingImage;
 
     std::vector<std::pair<std::string, core::Image>> results;
-    results.reserve(8);
+    results.reserve(9);
 
     results.emplace_back("Imagem atual", base);
 
     core::Image negativa = base;
     core::negative(negativa);
     results.emplace_back("1. Negativo", negativa);
+
+    core::Image brilho = base;
+    core::brightness(brilho, static_cast<double>(state.brightnessFactor));
+    char kBuf[32];
+    std::snprintf(kBuf, sizeof(kBuf), "%.2f", state.brightnessFactor);
+    results.emplace_back(std::string("1b. Brilho (k = ") + kBuf + ")", brilho);
 
     core::Image limiarizada = base;
     core::threshold(limiarizada, state.thresholdValue);

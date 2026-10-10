@@ -24,6 +24,8 @@ namespace ui {
         // parâmetros das tranf de intensidade
         int thresholdValue = 128;       
 
+        float brightnessFactor = 1.5f;     // k em s = k * r
+
         bool logAutoConstant = true;       
         float logConstant = 1.0f;          
 
@@ -71,6 +73,7 @@ namespace ui {
 
         // Tranformações
         void applyNegative();
+        void applyBrightness();
         void applyThreshold();
         void applyLogTransform();
         void applyGammaCorrection();

@@ -13,6 +13,11 @@ namespace core {
     //s = 255 - r
     void negative(Image& img);
 
+    // Brilho: multiplicacao por uma constante, s = k * r.
+    // k > 1 clareia, k < 1 escurece, k = 1 mantem a imagem.
+    // Implementada por tabela indexada (LUT) de 256 entradas; o resultado e
+    // arredondado e limitado a [0, 255]. Valores de k negativos viram 0.
+    void brightness(Image& img, double k);
 
     // s = c*log(1+r) - tranf log
     double computeAutoLogConstant(Image& img);

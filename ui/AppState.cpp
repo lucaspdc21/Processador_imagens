@@ -4,6 +4,7 @@
 #include "ImageResample.hpp"
 #include "ImageIntensity.hpp"
 #include <algorithm>
+#include <cstdio>
 
 namespace ui {
 
@@ -80,6 +81,14 @@ void AppState::applyNegative() {
     if (!hasImage) return;
     core::negative(workingImage);
     statusMessage = "Negativo da imagem aplicado.";
+}
+
+void AppState::applyBrightness() {
+    if (!hasImage) return;
+    core::brightness(workingImage, static_cast<double>(brightnessFactor));
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%.2f", brightnessFactor);
+    statusMessage = std::string("Brilho aplicado (k = ") + buf + ").";
 }
 
 void AppState::applyThreshold() {

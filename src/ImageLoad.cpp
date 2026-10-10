@@ -25,7 +25,9 @@ namespace core{
             unsigned char g = pixels[idx + 1];
             unsigned char b = pixels[idx + 2];
 
-            int gray = static_cast<int>(0.299 * r + 0.587 * g + 0.114 * b);
+            // Aritmetica inteira com arredondamento: para r = g = b = v o
+            // resultado e exatamente v (a versao em double truncava para v - 1)
+            int gray = (299 * r + 587 * g + 114 * b + 500) / 1000;
             outImage.pixel(row, col) = gray;
         }
     }

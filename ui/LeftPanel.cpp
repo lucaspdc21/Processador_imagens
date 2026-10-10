@@ -88,6 +88,16 @@ void RenderLeftPanel(AppState& state, float width, float height) {
             RefreshTexture(state);
         }
 
+        // Brilho
+        ImGui::SeparatorText("1b. Brilho");
+        ImGui::SetNextItemWidth(-1);
+        ImGui::SliderFloat("##brilho", &state.brightnessFactor, 0.0f, 3.0f, "k = %.2f");
+        ImGui::TextDisabled("s = k * r | k > 1 clareia, k < 1 escurece");
+        if (ImGui::Button("Aplicar brilho", ImVec2(-1, 0))) {
+            state.applyBrightness();
+            RefreshTexture(state);
+        }
+
         // Limiarizacao
         ImGui::SeparatorText("2. Limiarização (thresholding)");
         ImGui::SetNextItemWidth(-1);
