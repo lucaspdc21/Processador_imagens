@@ -4,19 +4,19 @@
 
 namespace core {
 
-static int getPixelClamped(Image& img, int x, int y) {
+static float getPixelClamped(const Image& img, int x, int y, int ch) {
     x = std::clamp(x, 0, img.getRows() - 1);
     y = std::clamp(y, 0, img.getCols() - 1);
-    return img.pixel(x, y);
+    return img.at(x, y, ch);
 }
 
-static int sampleNearest(Image& src, double x, double y) {
+static float sampleNearest(const Image& src, double x, double y, int ch) {
     int srcX = static_cast<int>(std::round(x));
     int srcY = static_cast<int>(std::round(y));
-    return getPixelClamped(src, srcX, srcY);
+    return getPixelClamped(src, srcX, srcY, ch);
 }
 
-static int sampleBilinear(Image& src, double x, double y) {
+static float sampleBilinear(const Image& src, double x, double y, int ch) {
     int x0 = static_cast<int>(std::floor(x));
     int y0 = static_cast<int>(std::floor(y));
     int x1 = x0 + 1;
@@ -24,16 +24,16 @@ static int sampleBilinear(Image& src, double x, double y) {
     double fx = x - x0;
     double fy = y - y0;
 
-    double v00 = getPixelClamped(src, x0, y0);
-    double v10 = getPixelClamped(src, x1, y0);
-    double v01 = getPixelClamped(src, x0, y1);
-    double v11 = getPixelClamped(src, x1, y1);
+    double v00 = getPixelClamped(src, x0, y0, ch);
+    double v10 = getPixelClamped(src, x1, y0, ch);
+    double v01 = getPixelClamped(src, x0, y1, ch);
+    double v11 = getPixelClamped(src, x1, y1, ch);
 
     double top = v00 * (1.0 - fx) + v10 * fx;
     double bottom = v01 * (1.0 - fx) + v11 * fx;
     double value = top * (1.0 - fy) + bottom * fy;
 
-    return static_cast<int>(std::round(value));
+    return static_cast<float>(std::round(value));
 }
 
 static double cubicWeight(double t) {
@@ -48,7 +48,7 @@ static double cubicWeight(double t) {
     return 0.0;
 }
 
-static int sampleBicubic(Image& src, double x, double y) {
+static float sampleBicubic(const Image& src, double x, double y, int ch) {
     int x1 = static_cast<int>(std::floor(x));
     int y1 = static_cast<int>(std::floor(y));
     double fx = x - x1;
@@ -59,11 +59,11 @@ static int sampleBicubic(Image& src, double x, double y) {
         double wx = cubicWeight(m - fx);
         for (int n = -1; n <= 2; ++n) {
             double wy = cubicWeight(n - fy);
-            result += getPixelClamped(src, x1 + m, y1 + n) * wx * wy;
+            result += getPixelClamped(src, x1 + m, y1 + n, ch) * wx * wy;
         }
     }
 
-    return static_cast<int>(std::round(std::clamp(result, 0.0, 255.0)));
+    return static_cast<float>(std::round(std::clamp(result, 0.0, static_cast<double>(kMaxIntensity))));
 }
 
 void resample(Image& img, int newRows, int newCols, resampleType method) {
@@ -72,34 +72,36 @@ void resample(Image& img, int newRows, int newCols, resampleType method) {
 
     int oldRows = img.getRows();
     int oldCols = img.getCols();
+    int channels = img.getChannels();
 
     if (oldRows == 0 || oldCols == 0) {
-        img = Image(newRows, newCols, img.getMaxIntensity(), img.getBitsPerPixel(), img.getDpi());
+        img = Image(newRows, newCols, img.getMaxIntensity(), img.getBitsPerPixel(), img.getDpi(), channels);
         return;
     }
 
     Image source = img;
-    img = Image(newRows, newCols, source.getMaxIntensity(), source.getBitsPerPixel(), source.getDpi());
+    img = Image(newRows, newCols, source.getMaxIntensity(), source.getBitsPerPixel(), source.getDpi(), channels);
 
     for (int x = 0; x < newRows; ++x) {
         double srcX = (static_cast<double>(x) + 0.5) * oldRows / newRows - 0.5;
         for (int y = 0; y < newCols; ++y) {
             double srcY = (static_cast<double>(y) + 0.5) * oldCols / newCols - 0.5;
 
-            int value;
-            switch (method) {
-                case resampleType::Bilinear:
-                    value = sampleBilinear(source, srcX, srcY);
-                    break;
-                case resampleType::Bicubica:
-                    value = sampleBicubic(source, srcX, srcY);
-                    break;
-                default:
-                    value = sampleNearest(source, srcX, srcY);
-                    break;
+            for (int ch = 0; ch < channels; ++ch) {
+                float value;
+                switch (method) {
+                    case resampleType::Bilinear:
+                        value = sampleBilinear(source, srcX, srcY, ch);
+                        break;
+                    case resampleType::Bicubica:
+                        value = sampleBicubic(source, srcX, srcY, ch);
+                        break;
+                    default:
+                        value = sampleNearest(source, srcX, srcY, ch);
+                        break;
+                }
+                img.at(x, y, ch) = value;
             }
-
-            img.pixel(x, y) = value;
         }
     }
 }

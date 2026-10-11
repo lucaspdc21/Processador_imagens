@@ -1,0 +1,1885 @@
+diff --git a/.gitattributes b/.gitattributes
+new file mode 100644
+index 0000000..d4b7829
+--- /dev/null
++++ b/.gitattributes
+@@ -0,0 +1,5 @@
++# Normaliza os finais de linha: o repositorio guarda LF e cada sistema converte ao fazer checkout.
++* text=auto
++*.png binary
++*.jpg binary
++*.bmp binary
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index ed593ab..7031c6d 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -19,10 +19,23 @@ add_library(core
+ 
+ target_include_directories(core PUBLIC
+     ${CMAKE_CURRENT_SOURCE_DIR}/include
+-    ${CMAKE_CURRENT_SOURCE_DIR}/ui/include
+     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb
+ )
+ 
++option(BUILD_GUI "Compila a interface grafica (precisa de GLFW, OpenGL e internet na primeira vez)" ON)
++option(BUILD_TESTS "Compila e registra os testes do nucleo (CTest)" ON)
++
++if(BUILD_TESTS)
++    enable_testing()
++    add_executable(core_tests tests/test_core.cpp)
++    target_link_libraries(core_tests PRIVATE core)
++    add_test(NAME core_tests COMMAND core_tests)
++endif()
++
++if(NOT BUILD_GUI)
++    return()
++endif()
++
+ find_package(OpenGL REQUIRED)
+ 
+ include(FetchContent)
+@@ -37,7 +50,6 @@ set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+ set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+ set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+ set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
+-#set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
+ if(UNIX AND NOT APPLE)
+     set(GLFW_BUILD_WAYLAND OFF CACHE BOOL "" FORCE)
+     set(GLFW_BUILD_X11 ON CACHE BOOL "" FORCE)
+@@ -51,7 +63,6 @@ add_library(imgui STATIC
+     ${IMGUI_DIR}/imgui_draw.cpp
+     ${IMGUI_DIR}/imgui_tables.cpp
+     ${IMGUI_DIR}/imgui_widgets.cpp
+-    ${IMGUI_DIR}/imgui_demo.cpp
+     ${IMGUI_DIR}/backends/imgui_impl_glfw.cpp
+     ${IMGUI_DIR}/backends/imgui_impl_opengl3.cpp
+ )
+@@ -77,5 +88,9 @@ add_executable(processador_gui
+     ui/RightPanel.cpp
+     ui/CompareWindow.cpp
+ )
+-target_include_directories(processador_gui PRIVATE ${TINYFD_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/ui)
++target_include_directories(processador_gui PRIVATE
++    ${TINYFD_DIR}
++    ${CMAKE_CURRENT_SOURCE_DIR}/ui
++    ${CMAKE_CURRENT_SOURCE_DIR}/ui/include
++)
+ target_link_libraries(processador_gui PRIVATE core imgui tinyfiledialogs)
+\ No newline at end of file
+diff --git a/README.md b/README.md
+index 12f4d1e..477bfa4 100644
+--- a/README.md
++++ b/README.md
+@@ -30,8 +30,8 @@ O projeto é dividido em duas camadas, sem dependência da camada de interface d
+ Processador/
+ ├── CMakeLists.txt
+ ├── include/                 # headers do núcleo
+-│   ├── Image.hpp            # classe Image (matriz de inteiros + metadados)
+-│   ├── ImageLoad.hpp        # abrir / salvar arquivo
++│   ├── Image.hpp            # classe Image (1 ou 3 canais, float, vetor contíguo + metadados)
++│   ├── ImageLoad.hpp        # abrir / salvar arquivo (PNG, BMP, JPG)
+ │   ├── ImageIntensity.hpp   # transformações de intensidade e esteganografia
+ │   ├── ImageQuantization.hpp# quantização (k bits)
+ │   ├── ImageResample.hpp    # reamostragem (vizinho / bilinear / bicúbica)
+@@ -91,6 +91,16 @@ cmake -S . -B build
+ cmake --build build --config Release
+ ```
+ 
++### Testes do núcleo
++
++Os testes não precisam de interface nem de GLFW:
++
++```bash
++cmake -S . -B build -DBUILD_GUI=OFF
++cmake --build build
++ctest --test-dir build --output-on-failure
++```
++
+ ### Rodar
+ 
+ ```bash
+@@ -106,7 +116,9 @@ build\Release\processador_gui.exe
+ 1. Clique em **Selecionar imagem** e escolha um arquivo.
+ 2. Ajuste os parâmetros no painel esquerdo e clique no botão "Aplicar ..." da transformação desejada. As transformações são cumulativas.
+ 3. Use **Comparar todas as transformações** para ver o resultado de cada uma lado a lado.
+-4. **Restaurar imagem original** desfaz tudo.
+-5. **Salvar como PNG** grava o resultado.
++4. **Desfazer (Ctrl+Z)** volta a última operação; **Restaurar imagem original** volta ao arquivo aberto (e também pode ser desfeito).
++5. **Salvar imagem** grava o resultado no formato da extensão escolhida (PNG, BMP ou JPG). JPG tem perdas e destrói mensagens escondidas por esteganografia; use PNG ou BMP.
++
++Observações: imagens coloridas são mantidas em RGB (3 canais) e as transformações valem para cada canal; o canal alfa de PNGs é descartado ao abrir. "Normalizar exibição" só altera a exibição, não os dados.
+ 
+ ---
+diff --git a/include/Image.hpp b/include/Image.hpp
+index 8373736..b58ca10 100644
+--- a/include/Image.hpp
++++ b/include/Image.hpp
+@@ -1,48 +1,62 @@
+-#pragma once 
++#pragma once
++#include <cstddef>
+ #include <vector>
+ 
+ namespace core {
+-    class Image{
++
++    // Valor maximo de intensidade de um canal (imagens de 8 bits).
++    // A quantizacao altera apenas o metadado bitsPerPixel; os valores continuam em 0..255.
++    inline constexpr int kMaxIntensity = 255;
++
++    // Imagem com 1 canal (cinza) ou 3 canais (RGB).
++    // Os dados ficam em um unico vetor contiguo, linha a linha, com os canais
++    // de cada pixel lado a lado: indice = (row * cols + col) * channels + ch.
++    // Os valores sao float para nao perder precisao nos passos intermediarios;
++    // o clamp para 0..255 e feito pelos algoritmos ao gravar o resultado e na exibicao.
++    class Image {
+         private:
+-            int rows;
+-            int cols;
+-            int maxIntensity;
+-            int bitsPerPixel; 
+-            double dpi;
+-            std::vector<std::vector<int>> data;
++            int rows = 0;
++            int cols = 0;
++            int maxIntensity = kMaxIntensity;
++            int bitsPerPixel = 8;
++            double dpi = 72.0;
++            int channels = 1;
++            std::vector<float> data;
+ 
+         public:
+             Image() = default;
+-            Image(int rows, int cols, int maxIntensity = 255, int bitsPerPixel = 8, double dpi = 72.0);
+-            int& pixel(int x, int y);
+-            
+-            void fill(int value);
+-            void clampToRange();
+-            int getRows(){
+-                return rows;
+-            }
++            // channels vem por ultimo para manter compativeis as chamadas antigas
++            // Image(rows, cols, maxIntensity, bitsPerPixel, dpi).
++            Image(int rows, int cols, int maxIntensity = kMaxIntensity, int bitsPerPixel = 8,
++                  double dpi = 72.0, int channels = 1);
+ 
+-            int getCols(){
+-                return cols;
++            // Acesso ao canal ch do pixel (row, col). Sem verificacao de limites.
++            float& at(int row, int col, int ch = 0) {
++                return data[(static_cast<size_t>(row) * cols + col) * channels + ch];
+             }
+-
+-            std::vector<std::vector<int>>& getData(){
+-                return data;
++            float at(int row, int col, int ch = 0) const {
++                return data[(static_cast<size_t>(row) * cols + col) * channels + ch];
+             }
+ 
+-            int getMaxIntensity(){ return maxIntensity; }
+-            int getBitsPerPixel(){ 
+-                return bitsPerPixel; 
+-            }
+-            void setBitsPerPixel(int k) { 
+-                bitsPerPixel = k; 
+-            }
++            void fill(float value);
++            // Limita todas as amostras a [0, maxIntensity].
++            void clampToRange();
+ 
+-            double getDpi(){ 
+-                return dpi; 
+-            }
+-            void setDpi(double newDpi) { 
+-                dpi = newDpi; 
+-            }
++            int getRows() const { return rows; }
++            int getCols() const { return cols; }
++            int getChannels() const { return channels; }
++            bool empty() const { return data.empty(); }
++
++            // Todas as amostras (rows * cols * channels), para percorrer a imagem inteira.
++            std::vector<float>& samples() { return data; }
++            const std::vector<float>& samples() const { return data; }
++            size_t sampleCount() const { return data.size(); }
++
++            int getMaxIntensity() const { return maxIntensity; }
++            int getBitsPerPixel() const { return bitsPerPixel; }
++            void setBitsPerPixel(int k) { bitsPerPixel = k; }
++
++            double getDpi() const { return dpi; }
++            void setDpi(double newDpi) { dpi = newDpi; }
+     };
+-}
+\ No newline at end of file
++}
+diff --git a/include/ImageIntensity.hpp b/include/ImageIntensity.hpp
+index d6116b4..9ec9f0b 100644
+--- a/include/ImageIntensity.hpp
++++ b/include/ImageIntensity.hpp
+@@ -4,6 +4,9 @@
+ 
+ namespace core {
+ 
++    // Todas as transformacoes abaixo valem para imagens cinza e coloridas:
++    // sao aplicadas independentemente em cada canal.
++
+     //Limiarizacao (Thresholding)
+     //s = 0 se r < limiar
+     //s = 255 se r >= limiar
+@@ -14,8 +17,11 @@ namespace core {
+     void negative(Image& img);
+ 
+ 
++    // Brilho: s = r + delta, com clamp em 0..255
++    void brightness(Image& img, int delta);
++
+     // s = c*log(1+r) - tranf log
+-    double computeAutoLogConstant(Image& img);
++    double computeAutoLogConstant(const Image& img);
+     void logTransform(Image& img, double c, bool autoConstant);
+ 
+     // s = c*r^gama - transf pot
+@@ -34,10 +40,12 @@ namespace core {
+     //Produz uma imagem binaria (0 ou 255) mostrando apenas aquele plano.
+     void bitPlaneSlice(Image& img, int plane);
+ 
+-    long long steganographyCapacityBytes(Image& img);
++    // Esteganografia LSB: cada amostra (cada canal de cada pixel) guarda 1 bit.
++    // Os primeiros 32 bits guardam o tamanho da mensagem em bytes.
++    long long steganographyCapacityBytes(const Image& img);
+ 
+     bool embedMessageLSB(Image& img, const std::string& message);
+ 
+-    std::string extractMessageLSB(Image& img);
++    std::string extractMessageLSB(const Image& img);
+ 
+ }
+diff --git a/include/ImageLoad.hpp b/include/ImageLoad.hpp
+index 8fde5fc..cd0d052 100644
+--- a/include/ImageLoad.hpp
++++ b/include/ImageLoad.hpp
+@@ -4,7 +4,19 @@
+ 
+ namespace core {
+ 
+-bool loadImage(std::string& path, Image& outImage);
+-bool saveImagePNG(std::string& path, Image& image);
++// Abre BMP, JPG, PNG ou TGA. Imagens em cinza ficam com 1 canal e coloridas com 3 (RGB).
++// O canal alfa, se existir, e descartado. Um BMP em que todo pixel tem R = G = B
++// (como o gerado ao salvar uma imagem cinza) e aberto com 1 canal.
++bool loadImage(const std::string& path, Image& outImage);
++
++// Grava a imagem no formato indicado pela extensao do arquivo (.png, .bmp, .jpg ou .jpeg).
++// Extensao desconhecida ou ausente grava PNG. JPG usa compressao com perdas.
++bool saveImage(const std::string& path, const Image& image);
++
++// Retorna true se a extensao do caminho for uma das aceitas por saveImage.
++bool hasSupportedSaveExtension(const std::string& path);
++
++// Retorna true se o caminho termina em .jpg ou .jpeg.
++bool isJpegPath(const std::string& path);
+ 
+ }
+diff --git a/include/ImageMetrics.hpp b/include/ImageMetrics.hpp
+index 8a4b76e..51c1698 100644
+--- a/include/ImageMetrics.hpp
++++ b/include/ImageMetrics.hpp
+@@ -9,7 +9,7 @@ namespace core {
+         double linePairsPerMm = 0.0; 
+     };
+ 
+-    SpatialMetrics computeSpatialMetrics(Image& img);
++    SpatialMetrics computeSpatialMetrics(const Image& img);
+ 
+     struct StorageMetrics {
+         long long bits = 0;
+@@ -18,6 +18,6 @@ namespace core {
+         double megabytes = 0.0;
+     };
+ 
+-    StorageMetrics computeStorageMetrics(Image& img);
++    StorageMetrics computeStorageMetrics(const Image& img);
+ 
+ }
+diff --git a/include/ImageStats.hpp b/include/ImageStats.hpp
+index 3536b02..9407806 100644
+--- a/include/ImageStats.hpp
++++ b/include/ImageStats.hpp
+@@ -10,6 +10,6 @@ namespace core {
+         double contrast = 0.0;  
+     };
+ 
+-    ImageStats computeStats(Image& img);
++    ImageStats computeStats(const Image& img);
+ 
+ }
+diff --git a/src/Image.cpp b/src/Image.cpp
+index 3b2f8fd..3eca810 100644
+--- a/src/Image.cpp
++++ b/src/Image.cpp
+@@ -1,28 +1,23 @@
+ #include "Image.hpp"
++#include <algorithm>
+ 
+ namespace core {
+-Image::Image(int rows, int cols, int maxIntensity, int bitsPerPixel, double dpi)
+-    : rows(rows), cols(cols), maxIntensity(maxIntensity), bitsPerPixel(bitsPerPixel), dpi(dpi){
+-        data = std::vector<std::vector<int>>(rows, std::vector<int>(cols,0));
+-}
+ 
+-int& Image::pixel(int x, int y){
+-    return data[x][y];
++Image::Image(int rows, int cols, int maxIntensity, int bitsPerPixel, double dpi, int channels)
++    : rows(std::max(0, rows)), cols(std::max(0, cols)), maxIntensity(maxIntensity),
++      bitsPerPixel(bitsPerPixel), dpi(dpi), channels(std::max(1, channels)) {
++    data.assign(static_cast<size_t>(this->rows) * this->cols * this->channels, 0.0f);
+ }
+ 
+-void Image::fill(int value) {
+-    for (auto& row : data) {
+-        std::fill(row.begin(), row.end(), value);
+-    }
++void Image::fill(float value) {
++    std::fill(data.begin(), data.end(), value);
+ }
+ 
+ void Image::clampToRange() {
+-    for (auto& row : data) {
+-        for (auto& v : row) {
+-            v = std::max(0, std::min(v, maxIntensity));
+-        }
++    const float hi = static_cast<float>(maxIntensity);
++    for (float& v : data) {
++        v = std::max(0.0f, std::min(v, hi));
+     }
+ }
+ 
+-
+-}
+\ No newline at end of file
++}
+diff --git a/src/ImageIntensity.cpp b/src/ImageIntensity.cpp
+index 440328c..0700b88 100644
+--- a/src/ImageIntensity.cpp
++++ b/src/ImageIntensity.cpp
+@@ -7,10 +7,19 @@ namespace core {
+ 
+ namespace {
+ 
+-    inline int clampByte(double v) {
+-        if (v < 0.0) return 0;
+-        if (v > 255.0) return 255;
+-        return static_cast<int>(std::lround(v));
++    constexpr double kMax = static_cast<double>(kMaxIntensity);
++
++    // Limita a 0..255 e arredonda para o inteiro mais proximo.
++    inline float clampByte(double v) {
++        if (v < 0.0) return 0.0f;
++        if (v > kMax) return static_cast<float>(kMaxIntensity);
++        return static_cast<float>(std::lround(v));
++    }
++
++    // Le uma amostra como inteiro de 0 a 255.
++    inline int readByte(float v) {
++        long r = std::lround(v);
++        return static_cast<int>(std::max(0L, std::min(r, static_cast<long>(kMaxIntensity))));
+     }
+ 
+     // Avalia a reta definida por dois pontos de controle (r1,s1) e (r2,s2),
+@@ -23,96 +32,86 @@ namespace {
+             if (denom == 0.0) return s2;
+             return (static_cast<double>(s2 - s1) / denom) * (r - r1) + s1;
+         } else {
+-            double denom = static_cast<double>(255 - r2);
++            double denom = static_cast<double>(kMaxIntensity - r2);
+             if (denom == 0.0) return s2;
+-            return (static_cast<double>(255 - s2) / denom) * (r - r2) + s2;
++            return (static_cast<double>(kMaxIntensity - s2) / denom) * (r - r2) + s2;
+         }
+     }
+ 
+ }
+ 
+ void threshold(Image& img, int limiar) {
+-    for (int row = 0; row < img.getRows(); ++row) {
+-        for (int col = 0; col < img.getCols(); ++col) {
+-            int r = img.pixel(row, col);
+-            img.pixel(row, col) = (r < limiar) ? 0 : 255;
+-        }
++    for (float& sample : img.samples()) {
++        int r = readByte(sample);
++        sample = (r < limiar) ? 0.0f : static_cast<float>(kMaxIntensity);
+     }
+ }
+ 
+ void negative(Image& img) {
+-    for (int row = 0; row < img.getRows(); ++row) {
+-        for (int col = 0; col < img.getCols(); ++col) {
+-            int r = std::max(0, std::min(img.pixel(row, col), 255));
+-            img.pixel(row, col) = 255 - r;
+-        }
++    for (float& sample : img.samples()) {
++        sample = static_cast<float>(kMaxIntensity - readByte(sample));
+     }
+ }
+ 
+-double computeAutoLogConstant(Image& img) {
++void brightness(Image& img, int delta) {
++    for (float& sample : img.samples()) {
++        sample = clampByte(static_cast<double>(readByte(sample)) + delta);
++    }
++}
++
++double computeAutoLogConstant(const Image& img) {
+     int maxVal = 0;
+     bool any = false;
+-    for (auto& row : img.getData()) {
+-        for (int v : row) {
+-            if (!any || v > maxVal) { maxVal = v; any = true; }
+-        }
++    for (float sample : img.samples()) {
++        int v = readByte(sample);
++        if (!any || v > maxVal) { maxVal = v; any = true; }
+     }
+     if (maxVal <= 0) return 1.0;
+-    return 255.0 / std::log(1.0 + static_cast<double>(maxVal));
++    return kMax / std::log(1.0 + static_cast<double>(maxVal));
+ }
+ 
+ void logTransform(Image& img, double c, bool autoConstant) {
+     double constant = autoConstant ? computeAutoLogConstant(img) : c;
+-    for (int row = 0; row < img.getRows(); ++row) {
+-        for (int col = 0; col < img.getCols(); ++col) {
+-            int r = std::max(0, std::min(img.pixel(row, col), 255));
+-            double s = constant * std::log(1.0 + static_cast<double>(r));
+-            img.pixel(row, col) = clampByte(s);
+-        }
++    for (float& sample : img.samples()) {
++        int r = readByte(sample);
++        sample = clampByte(constant * std::log(1.0 + static_cast<double>(r)));
+     }
+ }
+ 
+ void gammaCorrection(Image& img, double gamma, double c) {
+-    for (int row = 0; row < img.getRows(); ++row) {
+-        for (int col = 0; col < img.getCols(); ++col) {
+-            int r = std::max(0, std::min(img.pixel(row, col), 255));
+-            double rn = static_cast<double>(r) / 255.0;
+-            double sn = c * std::pow(rn, gamma);
+-            img.pixel(row, col) = clampByte(sn * 255.0);
+-        }
++    for (float& sample : img.samples()) {
++        int r = readByte(sample);
++        double rn = static_cast<double>(r) / kMax;
++        double sn = c * std::pow(rn, gamma);
++        sample = clampByte(sn * kMax);
+     }
+ }
+ 
+ void contrastStretch(Image& img, int r1, int s1, int r2, int s2) {
+-    r1 = std::max(0, std::min(r1, 255));
+-    r2 = std::max(0, std::min(r2, 255));
+-    s1 = std::max(0, std::min(s1, 255));
+-    s2 = std::max(0, std::min(s2, 255));
++    r1 = std::max(0, std::min(r1, kMaxIntensity));
++    r2 = std::max(0, std::min(r2, kMaxIntensity));
++    s1 = std::max(0, std::min(s1, kMaxIntensity));
++    s2 = std::max(0, std::min(s2, kMaxIntensity));
+     if (r1 > r2) std::swap(r1, r2); // mantem os pontos em ordem crescente
+ 
+-    for (int row = 0; row < img.getRows(); ++row) {
+-        for (int col = 0; col < img.getCols(); ++col) {
+-            int r = std::max(0, std::min(img.pixel(row, col), 255));
+-            double s = pieceLinear(static_cast<double>(r), r1, s1, r2, s2);
+-            img.pixel(row, col) = clampByte(s);
+-        }
++    for (float& sample : img.samples()) {
++        int r = readByte(sample);
++        sample = clampByte(pieceLinear(static_cast<double>(r), r1, s1, r2, s2));
+     }
+ }
+ 
+ void intensitySlice(Image& img, int rMin, int rMax, int highlightValue,
+                      bool preserveBackground, int backgroundValue) {
+     if (rMin > rMax) std::swap(rMin, rMax);
+-    highlightValue = std::max(0, std::min(highlightValue, 255));
+-    backgroundValue = std::max(0, std::min(backgroundValue, 255));
+-
+-    for (int row = 0; row < img.getRows(); ++row) {
+-        for (int col = 0; col < img.getCols(); ++col) {
+-            int r = std::max(0, std::min(img.pixel(row, col), 255));
+-            if (r >= rMin && r <= rMax) {
+-                img.pixel(row, col) = highlightValue;
+-            } else if (!preserveBackground) {
+-                img.pixel(row, col) = backgroundValue;
+-            }
++    highlightValue = std::max(0, std::min(highlightValue, kMaxIntensity));
++    backgroundValue = std::max(0, std::min(backgroundValue, kMaxIntensity));
++
++    for (float& sample : img.samples()) {
++        int r = readByte(sample);
++        if (r >= rMin && r <= rMax) {
++            sample = static_cast<float>(highlightValue);
++        } else if (!preserveBackground) {
++            sample = static_cast<float>(backgroundValue);
+         }
+     }
+ }
+@@ -120,39 +119,34 @@ void intensitySlice(Image& img, int rMin, int rMax, int highlightValue,
+ void bitPlaneSlice(Image& img, int plane) {
+     plane = std::max(1, std::min(plane, 8));
+     int mask = 1 << (plane - 1);
+-    for (int row = 0; row < img.getRows(); ++row) {
+-        for (int col = 0; col < img.getCols(); ++col) {
+-            int r = std::max(0, std::min(img.pixel(row, col), 255));
+-            img.pixel(row, col) = (r & mask) ? 255 : 0;
+-        }
++    for (float& sample : img.samples()) {
++        int r = readByte(sample);
++        sample = (r & mask) ? static_cast<float>(kMaxIntensity) : 0.0f;
+     }
+ }
+ 
+-long long steganographyCapacityBytes(Image& img) {
+-    long long totalPixels = static_cast<long long>(img.getRows()) * img.getCols();
+-    long long availableBits = totalPixels - 32; // 32 bits reservados para o cabecalho de tamanho
++long long steganographyCapacityBytes(const Image& img) {
++    long long totalSamples = static_cast<long long>(img.sampleCount());
++    long long availableBits = totalSamples - 32; // 32 bits reservados para o cabecalho de tamanho
+     if (availableBits <= 0) return 0;
+     return availableBits / 8;
+ }
+ 
+ bool embedMessageLSB(Image& img, const std::string& message) {
+-    long long totalPixels = static_cast<long long>(img.getRows()) * img.getCols();
++    long long totalSamples = static_cast<long long>(img.sampleCount());
+     long long totalBitsNeeded = 32 + static_cast<long long>(message.size()) * 8;
+-    if (message.empty() || totalBitsNeeded > totalPixels) {
++    if (message.empty() || totalBitsNeeded > totalSamples) {
+         return false; // mensagem vazia ou nao cabe na imagem
+     }
+ 
+-    auto& data = img.getData();
+-    int cols = img.getCols();
++    std::vector<float>& data = img.samples();
+     uint32_t length = static_cast<uint32_t>(message.size());
+ 
+-    long long bitIndex = 0;
++    size_t bitIndex = 0;
+     auto writeBit = [&](int bit) {
+-        int row = static_cast<int>(bitIndex / cols);
+-        int col = static_cast<int>(bitIndex % cols);
+-        int value = std::max(0, std::min(data[row][col], 255));
++        int value = readByte(data[bitIndex]);
+         value = (value & ~1) | (bit & 1); // substitui apenas o bit menos significativo
+-        data[row][col] = value;
++        data[bitIndex] = static_cast<float>(value);
+         ++bitIndex;
+     };
+ 
+@@ -171,18 +165,15 @@ bool embedMessageLSB(Image& img, const std::string& message) {
+     return true;
+ }
+ 
+-std::string extractMessageLSB(Image& img) {
+-    long long totalPixels = static_cast<long long>(img.getRows()) * img.getCols();
+-    if (totalPixels < 32) return "";
++std::string extractMessageLSB(const Image& img) {
++    long long totalSamples = static_cast<long long>(img.sampleCount());
++    if (totalSamples < 32) return "";
+ 
+-    auto& data = img.getData();
+-    int cols = img.getCols();
++    const std::vector<float>& data = img.samples();
+ 
+-    long long bitIndex = 0;
++    size_t bitIndex = 0;
+     auto readBit = [&]() -> int {
+-        int row = static_cast<int>(bitIndex / cols);
+-        int col = static_cast<int>(bitIndex % cols);
+-        int value = std::max(0, std::min(data[row][col], 255));
++        int value = readByte(data[bitIndex]);
+         ++bitIndex;
+         return value & 1;
+     };
+@@ -192,7 +183,7 @@ std::string extractMessageLSB(Image& img) {
+         length = (length << 1) | static_cast<uint32_t>(readBit());
+     }
+ 
+-    long long bitsAvailable = totalPixels - 32;
++    long long bitsAvailable = totalSamples - 32;
+     long long bitsNeeded = static_cast<long long>(length) * 8;
+     if (length == 0 || bitsNeeded > bitsAvailable) {
+         return ""; // nenhum cabecalho valido encontrado (imagem provavelmente nao tem mensagem)
+diff --git a/src/ImageLoad.cpp b/src/ImageLoad.cpp
+index 5cd46b6..366e5fa 100644
+--- a/src/ImageLoad.cpp
++++ b/src/ImageLoad.cpp
+@@ -5,55 +5,104 @@
+ #include "stb_image_write.h"
+ 
+ #include "ImageLoad.hpp"
++#include <algorithm>
++#include <cctype>
++#include <cmath>
+ #include <vector>
+ 
+-namespace core{
+-    bool loadImage(std::string& path, Image& outImage){
++namespace core {
++
++namespace {
++
++    std::string lowerExtension(const std::string& path) {
++        size_t slash = path.find_last_of("/\\");
++        size_t dot = path.find_last_of('.');
++        if (dot == std::string::npos || (slash != std::string::npos && dot < slash)) {
++            return "";
++        }
++        std::string ext = path.substr(dot);
++        std::transform(ext.begin(), ext.end(), ext.begin(),
++                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
++        return ext;
++    }
++
++}
++
++bool loadImage(const std::string& path, Image& outImage) {
+     int width = 0, height = 0, channelsInFile = 0;
+ 
+-    unsigned char* pixels = stbi_load(path.c_str(), &width, &height, &channelsInFile, 3);
++    // desired_channels = 0: mantem os canais do arquivo.
++    unsigned char* pixels = stbi_load(path.c_str(), &width, &height, &channelsInFile, 0);
+     if (!pixels) {
+         return false;
+     }
+ 
+-    outImage = Image(height, width, 255);
++    // 1 = cinza, 2 = cinza + alfa, 3 = RGB, 4 = RGB + alfa. O alfa e descartado.
++    int outChannels = (channelsInFile >= 3) ? 3 : 1;
+ 
++    // BMP nao tem formato de 1 canal: uma imagem cinza salva como BMP volta como RGB com
++    // R = G = B. Nesse caso (so em BMP) a imagem volta a ter 1 canal.
++    if (outChannels == 3 && lowerExtension(path) == ".bmp") {
++        bool allGray = true;
++        for (size_t i = 0; i < static_cast<size_t>(width) * height && allGray; ++i) {
++            const unsigned char* px = pixels + i * channelsInFile;
++            allGray = (px[0] == px[1] && px[1] == px[2]);
++        }
++        if (allGray) outChannels = 1;
++    }
++
++    Image loaded(height, width, kMaxIntensity, 8, 72.0, outChannels);
+     for (int row = 0; row < height; ++row) {
+         for (int col = 0; col < width; ++col) {
+-            size_t idx = (static_cast<size_t>(row) * width + col) * 3;
+-            unsigned char r = pixels[idx + 0];
+-            unsigned char g = pixels[idx + 1];
+-            unsigned char b = pixels[idx + 2];
+-
+-            int gray = static_cast<int>(0.299 * r + 0.587 * g + 0.114 * b);
+-            outImage.pixel(row, col) = gray;
++            size_t idx = (static_cast<size_t>(row) * width + col) * channelsInFile;
++            for (int ch = 0; ch < outChannels; ++ch) {
++                loaded.at(row, col, ch) = static_cast<float>(pixels[idx + ch]);
++            }
+         }
+     }
+ 
+     stbi_image_free(pixels);
++    outImage = loaded;
+     return true;
++}
+ 
+-    }
++bool hasSupportedSaveExtension(const std::string& path) {
++    std::string ext = lowerExtension(path);
++    return ext == ".png" || ext == ".bmp" || ext == ".jpg" || ext == ".jpeg";
++}
+ 
+-    bool saveImagePNG(std::string& path, Image& image){
+-        int height = image.getRows();
+-        int width = image.getCols();
+-        if (height <= 0 || width <= 0) {
+-            return false;
+-        }
++bool isJpegPath(const std::string& path) {
++    std::string ext = lowerExtension(path);
++    return ext == ".jpg" || ext == ".jpeg";
++}
+ 
+-        std::vector<unsigned char> pixels(static_cast<size_t>(height) * width);
+-        auto& data = image.getData();
+-        for (int row = 0; row < height; ++row) {
+-            for (int col = 0; col < width; ++col) {
+-                int v = data[row][col];
+-                if (v < 0) v = 0;
+-                if (v > 255) v = 255;
+-                pixels[static_cast<size_t>(row) * width + col] = static_cast<unsigned char>(v);
+-            }
+-        }
++bool saveImage(const std::string& path, const Image& image) {
++    int height = image.getRows();
++    int width = image.getCols();
++    int channels = image.getChannels();
++    if (height <= 0 || width <= 0 || (channels != 1 && channels != 3)) {
++        return false;
++    }
+ 
+-        int result = stbi_write_png(path.c_str(), width, height, 1, pixels.data(), width);
+-        return result != 0;
++    std::vector<unsigned char> pixels(image.sampleCount());
++    const std::vector<float>& samples = image.samples();
++    for (size_t i = 0; i < samples.size(); ++i) {
++        long v = std::lround(samples[i]);
++        v = std::max(0L, std::min(v, static_cast<long>(kMaxIntensity)));
++        pixels[i] = static_cast<unsigned char>(v);
+     }
+-}
+\ No newline at end of file
++
++    std::string ext = lowerExtension(path);
++    int result = 0;
++    if (ext == ".bmp") {
++        result = stbi_write_bmp(path.c_str(), width, height, channels, pixels.data());
++    } else if (ext == ".jpg" || ext == ".jpeg") {
++        result = stbi_write_jpg(path.c_str(), width, height, channels, pixels.data(), 95);
++    } else {
++        result = stbi_write_png(path.c_str(), width, height, channels, pixels.data(),
++                                width * channels);
++    }
++    return result != 0;
++}
++
++}
+diff --git a/src/ImageMetrics.cpp b/src/ImageMetrics.cpp
+index 7e79a69..6c63350 100644
+--- a/src/ImageMetrics.cpp
++++ b/src/ImageMetrics.cpp
+@@ -2,7 +2,7 @@
+ 
+ namespace core {
+ 
+-SpatialMetrics computeSpatialMetrics(Image& img) {
++SpatialMetrics computeSpatialMetrics(const Image& img) {
+     SpatialMetrics m;
+     double dpi = img.getDpi();
+     if (dpi <= 0) return m;
+@@ -16,10 +16,11 @@ SpatialMetrics computeSpatialMetrics(Image& img) {
+     return m;
+ }
+ 
+-StorageMetrics computeStorageMetrics(Image& img) {
++StorageMetrics computeStorageMetrics(const Image& img) {
+     StorageMetrics m;
+     m.bits = static_cast<long long>(img.getRows()) *
+              static_cast<long long>(img.getCols()) *
++             static_cast<long long>(img.getChannels()) *
+              static_cast<long long>(img.getBitsPerPixel());
+     m.bytes = static_cast<double>(m.bits) / 8.0;
+     m.kilobytes = m.bytes / 1024.0;
+diff --git a/src/ImageQuantization.cpp b/src/ImageQuantization.cpp
+index df659da..808f47c 100644
+--- a/src/ImageQuantization.cpp
++++ b/src/ImageQuantization.cpp
+@@ -1,12 +1,13 @@
+ #include "ImageQuantization.hpp"
+ #include <algorithm>
++#include <cmath>
+ 
+ namespace core {
+ 
+ long long levelsForBits(int k) {
+     if (k < 1) k = 1;
+     if (k > 8) k = 8;
+-    return 1LL << k; 
++    return 1LL << k;
+ }
+ 
+ void quantize(Image& img, int k) {
+@@ -16,14 +17,12 @@ void quantize(Image& img, int k) {
+     int levels = static_cast<int>(levelsForBits(k));
+     int step = 256 / levels;
+ 
+-    for (int x = 0; x < img.getRows(); ++x) {
+-        for (int y = 0; y < img.getCols(); ++y) {
+-            int clamped = std::max(0, std::min(img.pixel(x, y), 255));
+-            int q = clamped / step;
+-            if (q >= levels) q = levels - 1;
+-            int reconstructed = std::min(q * step + step / 2, 255);
+-            img.pixel(x, y) = reconstructed;
+-        }
++    for (float& sample : img.samples()) {
++        int clamped = std::max(0, std::min(static_cast<int>(std::lround(sample)), kMaxIntensity));
++        int q = clamped / step;
++        if (q >= levels) q = levels - 1;
++        int reconstructed = std::min(q * step + step / 2, kMaxIntensity);
++        sample = static_cast<float>(reconstructed);
+     }
+ 
+     img.setBitsPerPixel(k);
+diff --git a/src/ImageResample.cpp b/src/ImageResample.cpp
+index c9f6ef9..f7f5342 100644
+--- a/src/ImageResample.cpp
++++ b/src/ImageResample.cpp
+@@ -4,19 +4,19 @@
+ 
+ namespace core {
+ 
+-static int getPixelClamped(Image& img, int x, int y) {
++static float getPixelClamped(const Image& img, int x, int y, int ch) {
+     x = std::clamp(x, 0, img.getRows() - 1);
+     y = std::clamp(y, 0, img.getCols() - 1);
+-    return img.pixel(x, y);
++    return img.at(x, y, ch);
+ }
+ 
+-static int sampleNearest(Image& src, double x, double y) {
++static float sampleNearest(const Image& src, double x, double y, int ch) {
+     int srcX = static_cast<int>(std::round(x));
+     int srcY = static_cast<int>(std::round(y));
+-    return getPixelClamped(src, srcX, srcY);
++    return getPixelClamped(src, srcX, srcY, ch);
+ }
+ 
+-static int sampleBilinear(Image& src, double x, double y) {
++static float sampleBilinear(const Image& src, double x, double y, int ch) {
+     int x0 = static_cast<int>(std::floor(x));
+     int y0 = static_cast<int>(std::floor(y));
+     int x1 = x0 + 1;
+@@ -24,16 +24,16 @@ static int sampleBilinear(Image& src, double x, double y) {
+     double fx = x - x0;
+     double fy = y - y0;
+ 
+-    double v00 = getPixelClamped(src, x0, y0);
+-    double v10 = getPixelClamped(src, x1, y0);
+-    double v01 = getPixelClamped(src, x0, y1);
+-    double v11 = getPixelClamped(src, x1, y1);
++    double v00 = getPixelClamped(src, x0, y0, ch);
++    double v10 = getPixelClamped(src, x1, y0, ch);
++    double v01 = getPixelClamped(src, x0, y1, ch);
++    double v11 = getPixelClamped(src, x1, y1, ch);
+ 
+     double top = v00 * (1.0 - fx) + v10 * fx;
+     double bottom = v01 * (1.0 - fx) + v11 * fx;
+     double value = top * (1.0 - fy) + bottom * fy;
+ 
+-    return static_cast<int>(std::round(value));
++    return static_cast<float>(std::round(value));
+ }
+ 
+ static double cubicWeight(double t) {
+@@ -48,7 +48,7 @@ static double cubicWeight(double t) {
+     return 0.0;
+ }
+ 
+-static int sampleBicubic(Image& src, double x, double y) {
++static float sampleBicubic(const Image& src, double x, double y, int ch) {
+     int x1 = static_cast<int>(std::floor(x));
+     int y1 = static_cast<int>(std::floor(y));
+     double fx = x - x1;
+@@ -59,11 +59,11 @@ static int sampleBicubic(Image& src, double x, double y) {
+         double wx = cubicWeight(m - fx);
+         for (int n = -1; n <= 2; ++n) {
+             double wy = cubicWeight(n - fy);
+-            result += getPixelClamped(src, x1 + m, y1 + n) * wx * wy;
++            result += getPixelClamped(src, x1 + m, y1 + n, ch) * wx * wy;
+         }
+     }
+ 
+-    return static_cast<int>(std::round(std::clamp(result, 0.0, 255.0)));
++    return static_cast<float>(std::round(std::clamp(result, 0.0, static_cast<double>(kMaxIntensity))));
+ }
+ 
+ void resample(Image& img, int newRows, int newCols, resampleType method) {
+@@ -72,36 +72,38 @@ void resample(Image& img, int newRows, int newCols, resampleType method) {
+ 
+     int oldRows = img.getRows();
+     int oldCols = img.getCols();
++    int channels = img.getChannels();
+ 
+     if (oldRows == 0 || oldCols == 0) {
+-        img = Image(newRows, newCols, img.getMaxIntensity(), img.getBitsPerPixel(), img.getDpi());
++        img = Image(newRows, newCols, img.getMaxIntensity(), img.getBitsPerPixel(), img.getDpi(), channels);
+         return;
+     }
+ 
+     Image source = img;
+-    img = Image(newRows, newCols, source.getMaxIntensity(), source.getBitsPerPixel(), source.getDpi());
++    img = Image(newRows, newCols, source.getMaxIntensity(), source.getBitsPerPixel(), source.getDpi(), channels);
+ 
+     for (int x = 0; x < newRows; ++x) {
+         double srcX = (static_cast<double>(x) + 0.5) * oldRows / newRows - 0.5;
+         for (int y = 0; y < newCols; ++y) {
+             double srcY = (static_cast<double>(y) + 0.5) * oldCols / newCols - 0.5;
+ 
+-            int value;
+-            switch (method) {
+-                case resampleType::Bilinear:
+-                    value = sampleBilinear(source, srcX, srcY);
+-                    break;
+-                case resampleType::Bicubica:
+-                    value = sampleBicubic(source, srcX, srcY);
+-                    break;
+-                default:
+-                    value = sampleNearest(source, srcX, srcY);
+-                    break;
++            for (int ch = 0; ch < channels; ++ch) {
++                float value;
++                switch (method) {
++                    case resampleType::Bilinear:
++                        value = sampleBilinear(source, srcX, srcY, ch);
++                        break;
++                    case resampleType::Bicubica:
++                        value = sampleBicubic(source, srcX, srcY, ch);
++                        break;
++                    default:
++                        value = sampleNearest(source, srcX, srcY, ch);
++                        break;
++                }
++                img.at(x, y, ch) = value;
+             }
+-
+-            img.pixel(x, y) = value;
+         }
+     }
+ }
+ 
+-}
+\ No newline at end of file
++}
+diff --git a/src/ImageStats.cpp b/src/ImageStats.cpp
+index 379c765..a575852 100644
+--- a/src/ImageStats.cpp
++++ b/src/ImageStats.cpp
+@@ -1,21 +1,22 @@
+ #include "ImageStats.hpp"
++#include <cmath>
+ 
+ namespace core {
+ 
+-ImageStats computeStats(Image& img) {
++ImageStats computeStats(const Image& img) {
+     ImageStats stats;
+     bool any = false;
+ 
+-    for (auto& row : img.getData()) {
+-        for (int v : row) {
+-            if (!any) {
+-                stats.minValue = v;
+-                stats.maxValue = v;
+-                any = true;
+-            } else {
+-                if (v < stats.minValue) stats.minValue = v;
+-                if (v > stats.maxValue) stats.maxValue = v;
+-            }
++    // Considera todas as amostras (todos os canais).
++    for (float sample : img.samples()) {
++        int v = static_cast<int>(std::lround(sample));
++        if (!any) {
++            stats.minValue = v;
++            stats.maxValue = v;
++            any = true;
++        } else {
++            if (v < stats.minValue) stats.minValue = v;
++            if (v > stats.maxValue) stats.maxValue = v;
+         }
+     }
+ 
+diff --git a/tests/test_core.cpp b/tests/test_core.cpp
+new file mode 100644
+index 0000000..97cd614
+--- /dev/null
++++ b/tests/test_core.cpp
+@@ -0,0 +1,239 @@
++// Testes do nucleo (sem interface). Rodar com: ctest --test-dir build --output-on-failure
++#include "Image.hpp"
++#include "ImageIntensity.hpp"
++#include "ImageLoad.hpp"
++#include "ImageMetrics.hpp"
++#include "ImageQuantization.hpp"
++#include "ImageResample.hpp"
++#include "ImageStats.hpp"
++
++#include <cstdio>
++#include <filesystem>
++#include <string>
++
++static int failures = 0;
++
++#define CHECK(cond)                                                              \
++    do {                                                                         \
++        if (!(cond)) {                                                           \
++            std::printf("FALHOU %s:%d: %s\n", __FILE__, __LINE__, #cond);        \
++            ++failures;                                                          \
++        }                                                                        \
++    } while (0)
++
++using core::Image;
++
++static std::string tempPath(const std::string& name) {
++    return (std::filesystem::temp_directory_path() / name).string();
++}
++
++static bool sameImage(const Image& a, const Image& b) {
++    return a.getRows() == b.getRows() && a.getCols() == b.getCols() &&
++           a.getChannels() == b.getChannels() && a.samples() == b.samples();
++}
++
++// 16 x 16 pixels, cada nivel de cinza de 0 a 255 aparece exatamente uma vez.
++static Image allGrayLevels() {
++    Image img(16, 16);
++    for (int i = 0; i < 256; ++i) img.at(i / 16, i % 16) = static_cast<float>(i);
++    return img;
++}
++
++static Image colorImage() {
++    Image img(8, 8, 255, 8, 72.0, 3);
++    for (int r = 0; r < 8; ++r)
++        for (int c = 0; c < 8; ++c) {
++            img.at(r, c, 0) = static_cast<float>(r * 30);
++            img.at(r, c, 1) = static_cast<float>(c * 30);
++            img.at(r, c, 2) = static_cast<float>((r + c) * 15);
++        }
++    return img;
++}
++
++// Bug 1: salvar e reabrir uma imagem cinza nao pode alterar nenhum pixel.
++static void testGrayRoundTrip() {
++    for (const char* ext : {".png", ".bmp"}) {
++        Image original = allGrayLevels();
++        std::string path = tempPath(std::string("t_gray") + ext);
++        CHECK(core::saveImage(path, original));
++        Image loaded;
++        CHECK(core::loadImage(path, loaded));
++        CHECK(loaded.getChannels() == 1);
++        CHECK(sameImage(original, loaded));
++        std::filesystem::remove(path);
++    }
++}
++
++// Um BMP cinza (gravado como RGB com R = G = B) volta com 1 canal.
++static void testGrayBmpStaysGray() {
++    Image gray = allGrayLevels();
++    std::string path = tempPath("t_gray_ch.bmp");
++    CHECK(core::saveImage(path, gray));
++    Image loaded;
++    CHECK(core::loadImage(path, loaded));
++    CHECK(loaded.getChannels() == 1);
++    std::filesystem::remove(path);
++}
++
++// Bug 2: imagens coloridas mantem os 3 canais.
++static void testColorRoundTrip() {
++    for (const char* ext : {".png", ".bmp"}) {
++        Image original = colorImage();
++        std::string path = tempPath(std::string("t_color") + ext);
++        CHECK(core::saveImage(path, original));
++        Image loaded;
++        CHECK(core::loadImage(path, loaded));
++        CHECK(loaded.getChannels() == 3);
++        CHECK(sameImage(original, loaded));
++        std::filesystem::remove(path);
++    }
++}
++
++// Bug 3: JPG e escolhido pela extensao (com perdas, entao so conferimos o tamanho).
++static void testSaveFormats() {
++    Image original = colorImage();
++    std::string jpg = tempPath("t_color.jpg");
++    CHECK(core::saveImage(jpg, original));
++    Image loaded;
++    CHECK(core::loadImage(jpg, loaded));
++    CHECK(loaded.getRows() == 8 && loaded.getCols() == 8 && loaded.getChannels() == 3);
++    std::filesystem::remove(jpg);
++
++    CHECK(core::hasSupportedSaveExtension("a.PNG"));
++    CHECK(core::hasSupportedSaveExtension("pasta.v2/a.jpeg"));
++    CHECK(core::hasSupportedSaveExtension("a.bmp"));
++    CHECK(!core::hasSupportedSaveExtension("a"));
++    CHECK(!core::hasSupportedSaveExtension("pasta.v2/a"));
++    CHECK(core::isJpegPath("x.JPG"));
++    CHECK(!core::isJpegPath("x.png"));
++    CHECK(!core::loadImage(tempPath("nao_existe.png"), loaded));
++}
++
++static void testStegoInMemory() {
++    Image img = allGrayLevels();
++    CHECK(core::steganographyCapacityBytes(img) == (256 - 32) / 8);
++    CHECK(core::embedMessageLSB(img, "ola mundo"));
++    CHECK(core::extractMessageLSB(img) == "ola mundo");
++
++    Image tooSmall(4, 4);
++    CHECK(!core::embedMessageLSB(tooSmall, "x"));
++    CHECK(!core::embedMessageLSB(img, ""));
++    Image clean = allGrayLevels();
++    CHECK(core::extractMessageLSB(clean).empty()); // imagem sem mensagem
++}
++
++// Bug 1 + 3: a mensagem sobrevive ao salvar em PNG e BMP e reabrir (cinza e RGB).
++static void testStegoSurvivesLosslessFiles() {
++    Image gray(32, 32);
++    gray.fill(100);
++    Image color(32, 32, 255, 8, 72.0, 3);
++    for (int r = 0; r < 32; ++r)
++        for (int c = 0; c < 32; ++c)
++            for (int ch = 0; ch < 3; ++ch) color.at(r, c, ch) = static_cast<float>(50 + ch * 40);
++    for (Image* img : {&gray, &color}) {
++        CHECK(core::embedMessageLSB(*img, "segredo"));
++        for (const char* ext : {".png", ".bmp"}) {
++            std::string path = tempPath(std::string("t_stego") + ext);
++            CHECK(core::saveImage(path, *img));
++            Image loaded;
++            CHECK(core::loadImage(path, loaded));
++            CHECK(core::extractMessageLSB(loaded) == "segredo");
++            std::filesystem::remove(path);
++        }
++    }
++}
++
++static void testIntensity() {
++    Image img = allGrayLevels();
++    Image copy = img;
++    core::negative(copy);
++    CHECK(copy.at(0, 0) == 255.0f && copy.at(15, 15) == 0.0f);
++    core::negative(copy);
++    CHECK(sameImage(img, copy));
++
++    Image b = img;
++    core::brightness(b, 10);
++    CHECK(b.at(0, 0) == 10.0f && b.at(15, 15) == 255.0f && b.at(0, 5) == 15.0f);
++    core::brightness(b, -300);
++    for (float v : b.samples()) CHECK(v == 0.0f);
++
++    Image g = img;
++    core::gammaCorrection(g, 1.0, 1.0);
++    CHECK(sameImage(img, g));
++
++    Image t = img;
++    core::threshold(t, 128);
++    CHECK(t.at(7, 15) == 0.0f && t.at(8, 0) == 255.0f);
++
++    Image s = img;
++    core::contrastStretch(s, 50, 50, 200, 200);
++    CHECK(sameImage(img, s));
++
++    Image p = img;
++    core::bitPlaneSlice(p, 8);
++    CHECK(p.at(7, 15) == 0.0f && p.at(8, 0) == 255.0f);
++
++    // As operacoes valem para cada canal da imagem colorida.
++    Image c = colorImage();
++    Image c2 = c;
++    core::negative(c2);
++    CHECK(c2.at(2, 3, 0) == 255.0f - c.at(2, 3, 0));
++    CHECK(c2.at(2, 3, 2) == 255.0f - c.at(2, 3, 2));
++}
++
++static void testQuantizeAndResample() {
++    Image img = allGrayLevels();
++    Image q = img;
++    core::quantize(q, 8);
++    CHECK(sameImage(img, q));
++    core::quantize(q, 1);
++    CHECK(q.getBitsPerPixel() == 1);
++    for (float v : q.samples()) CHECK(v == 64.0f || v == 192.0f);
++
++    Image same = colorImage();
++    Image r = same;
++    core::resample(r, 8, 8, core::resampleType::Nearest);
++    CHECK(sameImage(same, r));
++    core::resample(r, 16, 12, core::resampleType::Bilinear);
++    CHECK(r.getRows() == 16 && r.getCols() == 12 && r.getChannels() == 3);
++    core::resample(r, 5, 5, core::resampleType::Bicubica);
++    CHECK(r.getRows() == 5 && r.getCols() == 5 && r.getChannels() == 3);
++}
++
++static void testStatsAndMetrics() {
++    Image img = allGrayLevels();
++    core::ImageStats st = core::computeStats(img);
++    CHECK(st.minValue == 0 && st.maxValue == 255 && st.dynamicRange == 255);
++    CHECK(st.contrast == 1.0);
++
++    Image c = colorImage();
++    core::StorageMetrics sm = core::computeStorageMetrics(c);
++    CHECK(sm.bits == 8LL * 8 * 3 * 8);
++    core::SpatialMetrics sp = core::computeSpatialMetrics(img);
++    CHECK(sp.widthInches > 0.2 && sp.widthInches < 0.23);
++
++    Image big(2, 2);
++    big.samples()[0] = -5.0f;
++    big.samples()[1] = 300.0f;
++    big.clampToRange();
++    CHECK(big.at(0, 0) == 0.0f && big.at(0, 1) == 255.0f);
++}
++
++int main() {
++    testGrayRoundTrip();
++    testGrayBmpStaysGray();
++    testColorRoundTrip();
++    testSaveFormats();
++    testStegoInMemory();
++    testStegoSurvivesLosslessFiles();
++    testIntensity();
++    testQuantizeAndResample();
++    testStatsAndMetrics();
++
++    if (failures == 0) {
++        std::printf("Todos os testes passaram.\n");
++        return 0;
++    }
++    std::printf("%d verificacao(oes) falharam.\n", failures);
++    return 1;
++}
+diff --git a/ui/AppState.cpp b/ui/AppState.cpp
+index c764136..d6649e5 100644
+--- a/ui/AppState.cpp
++++ b/ui/AppState.cpp
+@@ -7,58 +7,101 @@
+ 
+ namespace ui {
+ 
+-bool AppState::loadFromPath(std::string& path) {
+-    std::string pathCopy = path;
+-    core::Image loaded(0, 0);
+-    if (!core::loadImage(pathCopy, loaded)) {
+-        statusMessage = "Falha ao carregar a imagem: " + pathCopy;
++namespace {
++    // Limites do historico de desfazer (o que estourar primeiro descarta as copias mais antigas).
++    constexpr size_t kMaxHistoryEntries = 30;
++    constexpr size_t kMaxHistoryBytes = 512ull * 1024 * 1024;
++}
++
++bool AppState::loadFromPath(const std::string& path) {
++    core::Image loaded;
++    if (!core::loadImage(path, loaded)) {
++        statusMessage = "Falha ao carregar a imagem: " + path;
+         return false;
+     }
+ 
+     originalImage = loaded;
+     workingImage = loaded;
++    history.clear();
+     hasImage = true;
++    statsDirty = true;
+     bitsPerPixel = workingImage.getBitsPerPixel();
+     dpiValue = static_cast<float>(workingImage.getDpi());
+     resamplePercent = 100;
+-    statusMessage = "Imagem carregada: " + pathCopy;
++    steganoExtractedMessage.clear();
++    statusMessage = "Imagem carregada: " + path;
+     return true;
+ }
+ 
+-bool AppState::saveToPath(std::string& path) {
++bool AppState::saveToPath(const std::string& path) {
+     if (!hasImage) return false;
+-    if (core::saveImagePNG(path, workingImage)) {
+-        statusMessage = "Imagem salva em: " + path;
++
++    std::string target = core::hasSupportedSaveExtension(path) ? path : path + ".png";
++    if (core::saveImage(target, workingImage)) {
++        statusMessage = "Imagem salva em: " + target;
++        if (core::isJpegPath(target)) {
++            statusMessage += " (JPG tem perdas: uma mensagem escondida por esteganografia não sobrevive; use PNG ou BMP)";
++        }
+         return true;
+     }
+     statusMessage = "Falha ao salvar a imagem.";
+     return false;
+ }
+ 
++void AppState::pushHistory() {
++    if (!hasImage) return;
++    history.push_back(workingImage);
++
++    auto totalBytes = [this]() {
++        size_t total = 0;
++        for (const core::Image& img : history) total += img.sampleCount() * sizeof(float);
++        return total;
++    };
++    while (history.size() > 1 && (history.size() > kMaxHistoryEntries || totalBytes() > kMaxHistoryBytes)) {
++        history.erase(history.begin());
++    }
++}
++
++void AppState::undo() {
++    if (!hasImage || history.empty()) return;
++    workingImage = history.back();
++    history.pop_back();
++    statsDirty = true;
++    // Sincroniza os controles com a imagem recuperada.
++    bitsPerPixel = workingImage.getBitsPerPixel();
++    dpiValue = static_cast<float>(workingImage.getDpi());
++    statusMessage = "Última operação desfeita.";
++}
++
++void AppState::updateStatsIfNeeded() {
++    if (!hasImage || !statsDirty) return;
++    cachedStats = core::computeStats(workingImage);
++    cachedStorage = core::computeStorageMetrics(workingImage);
++    statsDirty = false;
++}
++
+ void AppState::applyQuantization() {
+     if (!hasImage) return;
++    pushHistory();
+     core::quantize(workingImage, bitsPerPixel);
++    statsDirty = true;
+     statusMessage = "Quantização aplicada (posterização).";
+ }
+ 
+ void AppState::applyResample() {
+     if (!hasImage) return;
+ 
+-    int newRows = std::max(1, originalImage.getRows() * resamplePercent / 100);
+-    int newCols = std::max(1, originalImage.getCols() * resamplePercent / 100);
+-
+-    // Parte sempre da original para nao acumular perdas de chamadas anteriores
+-    workingImage = originalImage;
+-    core::quantize(workingImage, bitsPerPixel);
++    // Opera sobre a imagem atual (como os demais botoes), sem voltar a original.
++    pushHistory();
++    int newRows = std::max(1, workingImage.getRows() * resamplePercent / 100);
++    int newCols = std::max(1, workingImage.getCols() * resamplePercent / 100);
+     core::resample(workingImage, newRows, newCols, interpolationMethod);
+-    if (resamplePercent < 100) {
+-        // Amplia de volta ao tamanho original para tornar visivel o efeito de
+-        // baixa resolucao espacial (pixelizacao)
+-        //core::resample(workingImage, originalImage.getRows(), originalImage.getCols(), interpolationMethod);
+-        statusMessage = "Reamostragem aplicada (efeito de baixa resolução espacial).";
+-    } else {
+-        statusMessage = "Reamostragem aplicada (imagem ampliada por interpolação).";
+-    }
++
++    statsDirty = true;
++    statusMessage = "Reamostragem aplicada: imagem agora com " + std::to_string(newRows) + " x " +
++                    std::to_string(newCols) + " pixels (" + std::to_string(resamplePercent) +
++                    "% do tamanho anterior).";
++    resamplePercent = 100; // a porcentagem e sempre relativa ao tamanho atual
+ }
+ 
+ void AppState::applyDpi(float newDpi) {
+@@ -70,51 +113,75 @@ void AppState::applyDpi(float newDpi) {
+ 
+ void AppState::restoreOriginal() {
+     if (!hasImage) return;
++    pushHistory(); // restaurar tambem pode ser desfeito
+     workingImage = originalImage;
++    statsDirty = true;
+     bitsPerPixel = workingImage.getBitsPerPixel();
+     resamplePercent = 100;
+     statusMessage = "Imagem restaurada ao estado original.";
+ }
+ 
++void AppState::applyBrightness() {
++    if (!hasImage) return;
++    pushHistory();
++    core::brightness(workingImage, brightnessValue);
++    statsDirty = true;
++    statusMessage = "Brilho aplicado (b = " + std::to_string(brightnessValue) + ").";
++}
++
+ void AppState::applyNegative() {
+     if (!hasImage) return;
++    pushHistory();
+     core::negative(workingImage);
++    statsDirty = true;
+     statusMessage = "Negativo da imagem aplicado.";
+ }
+ 
+ void AppState::applyThreshold() {
+     if (!hasImage) return;
++    pushHistory();
+     core::threshold(workingImage, thresholdValue);
++    statsDirty = true;
+     statusMessage = "Limiarização aplicada (m = " + std::to_string(thresholdValue) + ").";
+ }
+ 
+ void AppState::applyLogTransform() {
+     if (!hasImage) return;
++    pushHistory();
+     core::logTransform(workingImage, static_cast<double>(logConstant), logAutoConstant);
++    statsDirty = true;
+     statusMessage = "Transformação logarítmica aplicada.";
+ }
+ 
+ void AppState::applyGammaCorrection() {
+     if (!hasImage) return;
++    pushHistory();
+     core::gammaCorrection(workingImage, static_cast<double>(gammaValue), static_cast<double>(gammaConstant));
++    statsDirty = true;
+     statusMessage = "Correção de gama aplicada (gama = " + std::to_string(gammaValue) + ").";
+ }
+ 
+ void AppState::applyContrastStretch() {
+     if (!hasImage) return;
++    pushHistory();
+     core::contrastStretch(workingImage, stretchR1, stretchS1, stretchR2, stretchS2);
++    statsDirty = true;
+     statusMessage = "Alargamento de contraste aplicado.";
+ }
+ 
+ void AppState::applyIntensitySlice() {
+     if (!hasImage) return;
++    pushHistory();
+     core::intensitySlice(workingImage, sliceMin, sliceMax, sliceHighlight, slicePreserveBackground);
++    statsDirty = true;
+     statusMessage = "Fatiamento de níveis de intensidade aplicado.";
+ }
+ 
+ void AppState::applyBitPlaneSlice() {
+     if (!hasImage) return;
++    pushHistory();
+     core::bitPlaneSlice(workingImage, bitPlaneSelected);
++    statsDirty = true;
+     statusMessage = "Plano de bits " + std::to_string(bitPlaneSelected) + " extraído.";
+ }
+ 
+@@ -132,11 +199,17 @@ bool AppState::embedSteganoMessage() {
+         return false;
+     }
+ 
+-    bool ok = core::embedMessageLSB(workingImage, message);
+-    statusMessage = ok
+-        ? "Mensagem escondida nos bits menos significativos da imagem."
+-        : "A mensagem não cabe nesta imagem (reduza o texto ou use uma imagem maior).";
+-    return ok;
++    if (static_cast<long long>(message.size()) > core::steganographyCapacityBytes(workingImage)) {
++        statusMessage = "A mensagem não cabe nesta imagem (reduza o texto ou use uma imagem maior).";
++        return false;
++    }
++
++    pushHistory();
++    core::embedMessageLSB(workingImage, message);
++    statsDirty = true;
++    statusMessage = "Mensagem escondida nos bits menos significativos da imagem. "
++                    "Salve em PNG ou BMP e não aplique outras operações antes de salvar.";
++    return true;
+ }
+ 
+ void AppState::extractSteganoMessage() {
+diff --git a/ui/CenterPanel.cpp b/ui/CenterPanel.cpp
+index aa3c714..ec12a27 100644
+--- a/ui/CenterPanel.cpp
++++ b/ui/CenterPanel.cpp
+@@ -1,4 +1,5 @@
+ #include "CenterPanel.hpp"
++#include "ImageTexture.hpp"
+ #include "imgui.h"
+ #include <cstdint>
+ 
+@@ -10,6 +11,11 @@ void RenderCenterPanel(AppState& state, float width, float height) {
+     ImGui::Separator();
+ 
+     if (state.hasImage) {
++        if (ImGui::Checkbox("Normalizar exibição (min-max)", &state.displayNormalized)) {
++            RefreshTexture(state);
++        }
++        ImGui::SameLine();
++        ImGui::TextDisabled("(só altera a exibição)");
+         ImVec2 avail = ImGui::GetContentRegionAvail();
+         float imgAspect = static_cast<float>(state.workingImage.getCols()) /
+                            static_cast<float>(state.workingImage.getRows());
+diff --git a/ui/CompareWindow.cpp b/ui/CompareWindow.cpp
+index 93187eb..54bfdc6 100644
+--- a/ui/CompareWindow.cpp
++++ b/ui/CompareWindow.cpp
+@@ -2,6 +2,7 @@
+ #include "ImageTexture.hpp"
+ #include "ImageIntensity.hpp"
+ #include "imgui.h"
++#include <GLFW/glfw3.h>
+ #include <cstdint>
+ #include <string>
+ #include <utility>
+@@ -18,7 +19,7 @@ void BuildCompareTextures(AppState& state) {
+     core::Image& base = state.workingImage;
+ 
+     std::vector<std::pair<std::string, core::Image>> results;
+-    results.reserve(8);
++    results.reserve(9);
+ 
+     results.emplace_back("Imagem atual", base);
+ 
+@@ -50,6 +51,10 @@ void BuildCompareTextures(AppState& state) {
+     core::bitPlaneSlice(plano, state.bitPlaneSelected);
+     results.emplace_back("6. Plano de bits " + std::to_string(state.bitPlaneSelected), plano);
+ 
++    core::Image brilho = base;
++    core::brightness(brilho, state.brightnessValue);
++    results.emplace_back("7. Brilho (b = " + std::to_string(state.brightnessValue) + ")", brilho);
++
+     // Garante um slot de textura por resultado, reaproveitando os que ja existem
+     // (evita bug)
+     if (state.compareTextureIds.size() < results.size()) {
+@@ -65,9 +70,22 @@ void BuildCompareTextures(AppState& state) {
+     state.compareTexturesBuilt = true;
+ }
+ 
++void ReleaseCompareTextures(AppState& state) {
++    for (unsigned int id : state.compareTextureIds) {
++        if (id != 0) {
++            GLuint texture = static_cast<GLuint>(id);
++            glDeleteTextures(1, &texture);
++        }
++    }
++    state.compareTextureIds.clear();
++    state.compareLabels.clear();
++    state.compareTexturesBuilt = false;
++}
++
+ void RenderCompareWindow(AppState& state) {
+     if (!state.hasImage) {
+         state.showCompareWindow = false;
++        ReleaseCompareTextures(state);
+         return;
+     }
+ 
+@@ -111,6 +129,10 @@ void RenderCompareWindow(AppState& state) {
+     ImGui::End();
+ 
+     state.showCompareWindow = open;
++    if (!open) {
++        // Janela fechada: libera as texturas (elas sao recriadas ao abrir de novo).
++        ReleaseCompareTextures(state);
++    }
+ }
+ 
+ }
+diff --git a/ui/ImageTexture.cpp b/ui/ImageTexture.cpp
+index 605a10a..4f13517 100644
+--- a/ui/ImageTexture.cpp
++++ b/ui/ImageTexture.cpp
+@@ -1,13 +1,15 @@
+ #include "ImageTexture.hpp"
+ #include <GLFW/glfw3.h>
+ #include <algorithm>
++#include <cmath>
+ #include <vector>
+ 
+ namespace ui {
+ 
+-unsigned int UploadImageToTexture(core::Image& image, unsigned int existingTextureId) {
++unsigned int UploadImageToTexture(const core::Image& image, unsigned int existingTextureId, bool normalize) {
+     int rows = image.getRows();
+     int cols = image.getCols();
++    int channels = image.getChannels();
+     if (rows <= 0 || cols <= 0) return existingTextureId;
+ 
+     GLuint texture = static_cast<GLuint>(existingTextureId);
+@@ -15,15 +17,32 @@ unsigned int UploadImageToTexture(core::Image& image, unsigned int existingTextu
+         glGenTextures(1, &texture);
+     }
+ 
++    // Normalizacao min-max so para exibicao (resultados de filtros podem ter
++    // valores negativos ou acima de 255).
++    const std::vector<float>& samples = image.samples();
++    float lo = 0.0f;
++    float scale = 1.0f;
++    if (normalize && !samples.empty()) {
++        auto range = std::minmax_element(samples.begin(), samples.end());
++        lo = *range.first;
++        float hi = *range.second;
++        scale = (hi > lo) ? 255.0f / (hi - lo) : 0.0f; // imagem constante vira preta
++    }
++
++    auto toByte = [&](float v) -> unsigned char {
++        if (normalize) v = (v - lo) * scale;
++        long r = std::lround(v);
++        return static_cast<unsigned char>(std::max(0L, std::min(r, 255L)));
++    };
++
+     std::vector<unsigned char> rgba(static_cast<size_t>(rows) * cols * 4);
+-    const auto& data = image.getData();
+     for (int y = 0; y < rows; ++y) {
+         for (int x = 0; x < cols; ++x) {
+-            int v = std::max(0, std::min(data[y][x], 255));
+             size_t idx = (static_cast<size_t>(y) * cols + x) * 4;
+-            rgba[idx + 0] = static_cast<unsigned char>(v);
+-            rgba[idx + 1] = static_cast<unsigned char>(v);
+-            rgba[idx + 2] = static_cast<unsigned char>(v);
++            // 1 canal: cinza replicado em R, G, B. 3 canais: RGB.
++            rgba[idx + 0] = toByte(image.at(y, x, 0));
++            rgba[idx + 1] = toByte(image.at(y, x, channels == 3 ? 1 : 0));
++            rgba[idx + 2] = toByte(image.at(y, x, channels == 3 ? 2 : 0));
+             rgba[idx + 3] = 255;
+         }
+     }
+@@ -32,8 +51,6 @@ unsigned int UploadImageToTexture(core::Image& image, unsigned int existingTextu
+     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+-    //glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+-    //glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, cols, rows, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
+ 
+     return static_cast<unsigned int>(texture);
+@@ -41,7 +58,7 @@ unsigned int UploadImageToTexture(core::Image& image, unsigned int existingTextu
+ 
+ void RefreshTexture(AppState& state) {
+     if (!state.hasImage) return;
+-    state.textureId = UploadImageToTexture(state.workingImage, state.textureId);
++    state.textureId = UploadImageToTexture(state.workingImage, state.textureId, state.displayNormalized);
+ }
+ 
+ }
+diff --git a/ui/LeftPanel.cpp b/ui/LeftPanel.cpp
+index 98f7ebc..8a31f73 100644
+--- a/ui/LeftPanel.cpp
++++ b/ui/LeftPanel.cpp
+@@ -6,6 +6,13 @@
+ 
+ namespace ui {
+ 
++// Texto cinza que quebra linha (o painel e estreito).
++static void TextDisabledWrapped(const char* text) {
++    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
++    ImGui::TextWrapped("%s", text);
++    ImGui::PopStyleColor();
++}
++
+ void RenderLeftPanel(AppState& state, float width, float height) {
+     ImGui::BeginChild("PainelMetodos", ImVec2(width, height), true);
+     ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Métodos e funções");
+@@ -23,18 +30,35 @@ void RenderLeftPanel(AppState& state, float width, float height) {
+         }
+     }
+ 
++    // Ctrl+Z desfaz a ultima operacao (nao dispara enquanto se digita texto).
++    ImGuiIO& io = ImGui::GetIO();
++    if (state.hasImage && state.canUndo() && io.KeyCtrl && !io.WantTextInput &&
++        ImGui::IsKeyPressed(ImGuiKey_Z, false)) {
++        state.undo();
++        RefreshTexture(state);
++    }
++
+     ImGui::BeginDisabled(!state.hasImage);
+ 
+-    if (ImGui::Button("Salvar como PNG", ImVec2(-1, 0))) {
+-        const char* filters[] = { "*.png" };
++    if (ImGui::Button("Salvar imagem (PNG, BMP ou JPG)", ImVec2(-1, 0))) {
++        const char* filters[] = { "*.png", "*.bmp", "*.jpg", "*.jpeg" };
+         const char* savePath = tinyfd_saveFileDialog(
+-            "Salvar imagem", "saida.png", 1, filters, "PNG");
++            "Salvar imagem", "saida.png", 4, filters, "Imagens (PNG, BMP, JPG)");
+         if (savePath != nullptr) {
+             std::string path(savePath);
+             state.saveToPath(path);
+         }
+     }
+ 
++    TextDisabledWrapped("O formato vem da extensão do nome. JPG tem perdas.");
++
++    ImGui::BeginDisabled(!state.canUndo());
++    if (ImGui::Button("Desfazer (Ctrl+Z)", ImVec2(-1, 0))) {
++        state.undo();
++        RefreshTexture(state);
++    }
++    ImGui::EndDisabled();
++
+     ImGui::Dummy(ImVec2(0, 10));
+ 
+     if (ImGui::CollapsingHeader("Resolução (intensidade / espacial)", ImGuiTreeNodeFlags_DefaultOpen)) {
+@@ -52,7 +76,7 @@ void RenderLeftPanel(AppState& state, float width, float height) {
+         ImGui::Dummy(ImVec2(0, 10));
+         ImGui::Text("Resolução espacial (reamostragem)");
+         ImGui::SetNextItemWidth(-1);
+-        ImGui::SliderInt("##resample", &state.resamplePercent, 5, 500, "%d%% do tamanho original");
++        ImGui::SliderInt("##resample", &state.resamplePercent, 5, 500, "%d%% do tamanho atual");
+         ImGui::Text("Interpolação");
+         int method = static_cast<int>(state.interpolationMethod);
+         ImGui::RadioButton("Vizinho mais próximo", &method, 0);
+@@ -88,6 +112,15 @@ void RenderLeftPanel(AppState& state, float width, float height) {
+             RefreshTexture(state);
+         }
+ 
++        // Brilho
++        ImGui::SeparatorText("1b. Brilho (s = r + b)");
++        ImGui::SetNextItemWidth(-1);
++        ImGui::SliderInt("##brilho", &state.brightnessValue, -255, 255, "b = %d");
++        if (ImGui::Button("Aplicar brilho", ImVec2(-1, 0))) {
++            state.applyBrightness();
++            RefreshTexture(state);
++        }
++
+         // Limiarizacao
+         ImGui::SeparatorText("2. Limiarização (thresholding)");
+         ImGui::SetNextItemWidth(-1);
+@@ -162,6 +195,8 @@ void RenderLeftPanel(AppState& state, float width, float height) {
+ 
+         ImGui::Dummy(ImVec2(0, 6));
+         ImGui::Text("Esconder mensagem (usa o bit 1 / LSB)");
++        TextDisabledWrapped("Qualquer operação depois de esconder altera esses bits e apaga a mensagem.");
++        TextDisabledWrapped("Esconda por último e salve em PNG ou BMP (JPG destrói a mensagem).");
+         ImGui::SetNextItemWidth(-1);
+         ImGui::InputText("##steganomsg", state.steganoMessageBuffer, sizeof(state.steganoMessageBuffer));
+         ImGui::TextDisabled("Capacidade da imagem atual: %lld bytes", state.steganographyCapacityBytes());
+diff --git a/ui/RightPanel.cpp b/ui/RightPanel.cpp
+index af8bcca..90c2494 100644
+--- a/ui/RightPanel.cpp
++++ b/ui/RightPanel.cpp
+@@ -1,6 +1,5 @@
+ #include "RightPanel.hpp"
+ #include "ImageQuantization.hpp"
+-#include "ImageStats.hpp"
+ #include "ImageMetrics.hpp"
+ #include "imgui.h"
+ 
+@@ -12,19 +11,25 @@ void RenderRightPanel(AppState& state, float width, float height) {
+     ImGui::Separator();
+ 
+     if (state.hasImage) {
+-        core::Image& img = state.workingImage;
+-        core::ImageStats stats = core::computeStats(img);
++        const core::Image& img = state.workingImage;
++        // Estatisticas e armazenamento so sao recalculados quando a imagem muda.
++        state.updateStatsIfNeeded();
++        const core::ImageStats& stats = state.cachedStats;
++        const core::StorageMetrics& storage = state.cachedStorage;
+         core::SpatialMetrics spatial = core::computeSpatialMetrics(img);
+-        core::StorageMetrics storage = core::computeStorageMetrics(img);
+ 
+         ImGui::Text("Tamanho (M x N): %d x %d", img.getRows(), img.getCols());
+         ImGui::Text("Total de pixels: %lld",
+                     static_cast<long long>(img.getRows()) * img.getCols());
++        ImGui::Text("Canais: %d (%s)", img.getChannels(), img.getChannels() == 3 ? "RGB" : "cinza");
+ 
+         ImGui::Dummy(ImVec2(0, 8));
+         ImGui::Text("Intensidade luminosa");
+         ImGui::Text("k (bits/pixel): %d", img.getBitsPerPixel());
+         ImGui::Text("L = 2^k: %lld níveis", core::levelsForBits(img.getBitsPerPixel()));
++        ImGui::Text("Mínimo: %d | Máximo: %d", stats.minValue, stats.maxValue);
++        ImGui::Text("Faixa dinâmica: %d", stats.dynamicRange);
++        ImGui::Text("Contraste (Michelson): %.3f", stats.contrast);
+ 
+         ImGui::Dummy(ImVec2(0, 8));
+         ImGui::Text("Resolução espacial");
+@@ -32,6 +37,12 @@ void RenderRightPanel(AppState& state, float width, float height) {
+         ImGui::Text("Tamanho físico: %.2f x %.2f pol.",
+                     spatial.widthInches, spatial.heightInches);
+ 
++        ImGui::Dummy(ImVec2(0, 8));
++        ImGui::Text("Armazenamento");
++        ImGui::Text("Bits: %lld", storage.bits);
++        ImGui::Text("Bytes: %.0f", storage.bytes);
++        ImGui::Text("%.2f KB | %.3f MB", storage.kilobytes, storage.megabytes);
++
+         ImGui::Dummy(ImVec2(0, 8));
+     } else {
+         ImGui::TextWrapped("Carregue uma imagem para ver suas informações.");
+diff --git a/ui/include/AppState.hpp b/ui/include/AppState.hpp
+index 3f490ea..50ea732 100644
+--- a/ui/include/AppState.hpp
++++ b/ui/include/AppState.hpp
+@@ -2,7 +2,9 @@
+ #include <string>
+ #include <vector>
+ #include "Image.hpp"
++#include "ImageMetrics.hpp"
+ #include "ImageResample.hpp"
++#include "ImageStats.hpp"
+ 
+ namespace ui {
+ 
+@@ -16,12 +18,17 @@ namespace ui {
+ 
+         int bitsPerPixel = 8;       // k selecionado na interface
+         float dpiValue = 72.0f;     // dpi selecionado na interface
+-        int resamplePercent = 100;  // % do tamanho original para reamostragem
++        int resamplePercent = 100;  // % do tamanho atual da imagem para reamostragem
+ 
+         core::resampleType interpolationMethod = core::resampleType::Nearest;
+         std::string statusMessage = "Nenhuma imagem carregada.";
+ 
++        // Exibe a imagem com normalizacao min-max (so na textura, nao altera os dados).
++        // Util para resultados com valores negativos ou acima de 255 (Laplaciano, Sobel...).
++        bool displayNormalized = false;
++
+         // parâmetros das tranf de intensidade
++        int brightnessValue = 0;
+         int thresholdValue = 128;       
+ 
+         bool logAutoConstant = true;       
+@@ -51,11 +58,28 @@ namespace ui {
+         std::vector<unsigned int> compareTextureIds;
+         std::vector<std::string> compareLabels;
+ 
++        // Historico para desfazer: copias de workingImage tiradas antes de cada operacao.
++        std::vector<core::Image> history;
++
++        // Estatisticas exibidas no painel direito. So sao recalculadas quando a imagem muda.
++        bool statsDirty = true;
++        core::ImageStats cachedStats;
++        core::StorageMetrics cachedStorage;
++
+         // Carrega uma imagem do disco e reseta os parametros da interface.
+-        bool loadFromPath(std::string& path);
++        bool loadFromPath(const std::string& path);
++
++        // Salva a imagem atualmente em edicao (workingImage). O formato (PNG, BMP ou JPG)
++        // vem da extensao do arquivo; sem extensao valida, acrescenta .png.
++        bool saveToPath(const std::string& path);
++
++        // Desfazer
++        bool canUndo() const { return !history.empty(); }
++        void pushHistory();   // chamada no inicio de cada operacao que altera a imagem
++        void undo();
+ 
+-        // Salva a imagem atualmente em edicao (workingImage) como PNG.
+-        bool saveToPath(std::string& path);
++        // Recalcula cachedStats e cachedStorage se a imagem mudou desde a ultima vez.
++        void updateStatsIfNeeded();
+ 
+         // Aplica a quantizacao (posterizacao) com o valor de bitsPerPixel atual.
+         void applyQuantization();
+@@ -70,6 +94,7 @@ namespace ui {
+         void restoreOriginal();
+ 
+         // Tranformações
++        void applyBrightness();
+         void applyNegative();
+         void applyThreshold();
+         void applyLogTransform();
+diff --git a/ui/include/CompareWindow.hpp b/ui/include/CompareWindow.hpp
+index d2421d4..dfe9970 100644
+--- a/ui/include/CompareWindow.hpp
++++ b/ui/include/CompareWindow.hpp
+@@ -9,4 +9,7 @@ namespace ui {
+     void BuildCompareTextures(AppState& state);
+     void RenderCompareWindow(AppState& state);
+ 
++    // Libera as texturas OpenGL da janela de comparacao (ao fechar a janela e ao encerrar).
++    void ReleaseCompareTextures(AppState& state);
++
+ }
+diff --git a/ui/include/ImageTexture.hpp b/ui/include/ImageTexture.hpp
+index 9b6cf0f..fd50457 100644
+--- a/ui/include/ImageTexture.hpp
++++ b/ui/include/ImageTexture.hpp
+@@ -4,6 +4,11 @@
+ namespace ui {
+ 
+     void RefreshTexture(AppState& state);
+-    unsigned int UploadImageToTexture(core::Image& image, unsigned int existingTextureId = 0);
++
++    // Envia a imagem (1 ou 3 canais) para uma textura OpenGL e devolve o id.
++    // normalize = true aplica normalizacao min-max (v' = (v - min) * 255 / (max - min))
++    // apenas no buffer da textura; os dados da imagem nao sao alterados.
++    unsigned int UploadImageToTexture(const core::Image& image, unsigned int existingTextureId = 0,
++                                      bool normalize = false);
+ 
+ }
+diff --git a/ui/main.cpp b/ui/main.cpp
+index d819449..04e6c7c 100644
+--- a/ui/main.cpp
++++ b/ui/main.cpp
+@@ -116,6 +116,7 @@ int main() {
+ 
+         glfwSwapBuffers(window);
+     }
++    ui::ReleaseCompareTextures(state);
+     glDeleteTextures(1, &texture);
+     ImGui_ImplOpenGL3_Shutdown();
+     ImGui_ImplGlfw_Shutdown();

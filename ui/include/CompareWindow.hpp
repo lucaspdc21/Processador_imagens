@@ -9,4 +9,7 @@ namespace ui {
     void BuildCompareTextures(AppState& state);
     void RenderCompareWindow(AppState& state);
 
+    // Libera as texturas OpenGL da janela de comparacao (ao fechar a janela e ao encerrar).
+    void ReleaseCompareTextures(AppState& state);
+
 }

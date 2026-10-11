@@ -1,13 +1,15 @@
 #include "ImageTexture.hpp"
 #include <GLFW/glfw3.h>
 #include <algorithm>
+#include <cmath>
 #include <vector>
 
 namespace ui {
 
-unsigned int UploadImageToTexture(core::Image& image, unsigned int existingTextureId) {
+unsigned int UploadImageToTexture(const core::Image& image, unsigned int existingTextureId, bool normalize) {
     int rows = image.getRows();
     int cols = image.getCols();
+    int channels = image.getChannels();
     if (rows <= 0 || cols <= 0) return existingTextureId;
 
     GLuint texture = static_cast<GLuint>(existingTextureId);
@@ -15,15 +17,32 @@ unsigned int UploadImageToTexture(core::Image& image, unsigned int existingTextu
         glGenTextures(1, &texture);
     }
 
+    // Normalizacao min-max so para exibicao (resultados de filtros podem ter
+    // valores negativos ou acima de 255).
+    const std::vector<float>& samples = image.samples();
+    float lo = 0.0f;
+    float scale = 1.0f;
+    if (normalize && !samples.empty()) {
+        auto range = std::minmax_element(samples.begin(), samples.end());
+        lo = *range.first;
+        float hi = *range.second;
+        scale = (hi > lo) ? 255.0f / (hi - lo) : 0.0f; // imagem constante vira preta
+    }
+
+    auto toByte = [&](float v) -> unsigned char {
+        if (normalize) v = (v - lo) * scale;
+        long r = std::lround(v);
+        return static_cast<unsigned char>(std::max(0L, std::min(r, 255L)));
+    };
+
     std::vector<unsigned char> rgba(static_cast<size_t>(rows) * cols * 4);
-    const auto& data = image.getData();
     for (int y = 0; y < rows; ++y) {
         for (int x = 0; x < cols; ++x) {
-            int v = std::max(0, std::min(data[y][x], 255));
             size_t idx = (static_cast<size_t>(y) * cols + x) * 4;
-            rgba[idx + 0] = static_cast<unsigned char>(v);
-            rgba[idx + 1] = static_cast<unsigned char>(v);
-            rgba[idx + 2] = static_cast<unsigned char>(v);
+            // 1 canal: cinza replicado em R, G, B. 3 canais: RGB.
+            rgba[idx + 0] = toByte(image.at(y, x, 0));
+            rgba[idx + 1] = toByte(image.at(y, x, channels == 3 ? 1 : 0));
+            rgba[idx + 2] = toByte(image.at(y, x, channels == 3 ? 2 : 0));
             rgba[idx + 3] = 255;
         }
     }
@@ -32,8 +51,6 @@ unsigned int UploadImageToTexture(core::Image& image, unsigned int existingTextu
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    //glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    //glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, cols, rows, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
 
     return static_cast<unsigned int>(texture);
@@ -41,7 +58,7 @@ unsigned int UploadImageToTexture(core::Image& image, unsigned int existingTextu
 
 void RefreshTexture(AppState& state) {
     if (!state.hasImage) return;
-    state.textureId = UploadImageToTexture(state.workingImage, state.textureId);
+    state.textureId = UploadImageToTexture(state.workingImage, state.textureId, state.displayNormalized);
 }
 
 }

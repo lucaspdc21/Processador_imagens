@@ -19,9 +19,22 @@ add_library(core
 
 target_include_directories(core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/ui/include
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb
 )
+
+option(BUILD_GUI "Compila a interface grafica (precisa de GLFW, OpenGL e internet na primeira vez)" ON)
+option(BUILD_TESTS "Compila e registra os testes do nucleo (CTest)" ON)
+
+if(BUILD_TESTS)
+    enable_testing()
+    add_executable(core_tests tests/test_core.cpp)
+    target_link_libraries(core_tests PRIVATE core)
+    add_test(NAME core_tests COMMAND core_tests)
+endif()
+
+if(NOT BUILD_GUI)
+    return()
+endif()
 
 find_package(OpenGL REQUIRED)
 
@@ -37,7 +50,6 @@ set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
-#set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
 if(UNIX AND NOT APPLE)
     set(GLFW_BUILD_WAYLAND OFF CACHE BOOL "" FORCE)
     set(GLFW_BUILD_X11 ON CACHE BOOL "" FORCE)
@@ -51,7 +63,6 @@ add_library(imgui STATIC
     ${IMGUI_DIR}/imgui_draw.cpp
     ${IMGUI_DIR}/imgui_tables.cpp
     ${IMGUI_DIR}/imgui_widgets.cpp
-    ${IMGUI_DIR}/imgui_demo.cpp
     ${IMGUI_DIR}/backends/imgui_impl_glfw.cpp
     ${IMGUI_DIR}/backends/imgui_impl_opengl3.cpp
 )
@@ -77,5 +88,9 @@ add_executable(processador_gui
     ui/RightPanel.cpp
     ui/CompareWindow.cpp
 )
-target_include_directories(processador_gui PRIVATE ${TINYFD_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/ui)
+target_include_directories(processador_gui PRIVATE
+    ${TINYFD_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/ui
+    ${CMAKE_CURRENT_SOURCE_DIR}/ui/include
+)
 target_link_libraries(processador_gui PRIVATE core imgui tinyfiledialogs)

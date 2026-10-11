@@ -2,6 +2,7 @@
 #include "ImageTexture.hpp"
 #include "ImageIntensity.hpp"
 #include "imgui.h"
+#include <GLFW/glfw3.h>
 #include <cstdint>
 #include <string>
 #include <utility>
@@ -18,7 +19,7 @@ void BuildCompareTextures(AppState& state) {
     core::Image& base = state.workingImage;
 
     std::vector<std::pair<std::string, core::Image>> results;
-    results.reserve(8);
+    results.reserve(9);
 
     results.emplace_back("Imagem atual", base);
 
@@ -50,6 +51,10 @@ void BuildCompareTextures(AppState& state) {
     core::bitPlaneSlice(plano, state.bitPlaneSelected);
     results.emplace_back("6. Plano de bits " + std::to_string(state.bitPlaneSelected), plano);
 
+    core::Image brilho = base;
+    core::brightness(brilho, state.brightnessValue);
+    results.emplace_back("7. Brilho (b = " + std::to_string(state.brightnessValue) + ")", brilho);
+
     // Garante um slot de textura por resultado, reaproveitando os que ja existem
     // (evita bug)
     if (state.compareTextureIds.size() < results.size()) {
@@ -65,9 +70,22 @@ void BuildCompareTextures(AppState& state) {
     state.compareTexturesBuilt = true;
 }
 
+void ReleaseCompareTextures(AppState& state) {
+    for (unsigned int id : state.compareTextureIds) {
+        if (id != 0) {
+            GLuint texture = static_cast<GLuint>(id);
+            glDeleteTextures(1, &texture);
+        }
+    }
+    state.compareTextureIds.clear();
+    state.compareLabels.clear();
+    state.compareTexturesBuilt = false;
+}
+
 void RenderCompareWindow(AppState& state) {
     if (!state.hasImage) {
         state.showCompareWindow = false;
+        ReleaseCompareTextures(state);
         return;
     }
 
@@ -111,6 +129,10 @@ void RenderCompareWindow(AppState& state) {
     ImGui::End();
 
     state.showCompareWindow = open;
+    if (!open) {
+        // Janela fechada: libera as texturas (elas sao recriadas ao abrir de novo).
+        ReleaseCompareTextures(state);
+    }
 }
 
 }

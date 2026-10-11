@@ -30,8 +30,8 @@ O projeto é dividido em duas camadas, sem dependência da camada de interface d
 Processador/
 ├── CMakeLists.txt
 ├── include/                 # headers do núcleo
-│   ├── Image.hpp            # classe Image (matriz de inteiros + metadados)
-│   ├── ImageLoad.hpp        # abrir / salvar arquivo
+│   ├── Image.hpp            # classe Image (1 ou 3 canais, float, vetor contíguo + metadados)
+│   ├── ImageLoad.hpp        # abrir / salvar arquivo (PNG, BMP, JPG)
 │   ├── ImageIntensity.hpp   # transformações de intensidade e esteganografia
 │   ├── ImageQuantization.hpp# quantização (k bits)
 │   ├── ImageResample.hpp    # reamostragem (vizinho / bilinear / bicúbica)
@@ -91,6 +91,16 @@ cmake -S . -B build
 cmake --build build --config Release
 ```
 
+### Testes do núcleo
+
+Os testes não precisam de interface nem de GLFW:
+
+```bash
+cmake -S . -B build -DBUILD_GUI=OFF
+cmake --build build
+ctest --test-dir build --output-on-failure
+```
+
 ### Rodar
 
 ```bash
@@ -106,7 +116,9 @@ build\Release\processador_gui.exe
 1. Clique em **Selecionar imagem** e escolha um arquivo.
 2. Ajuste os parâmetros no painel esquerdo e clique no botão "Aplicar ..." da transformação desejada. As transformações são cumulativas.
 3. Use **Comparar todas as transformações** para ver o resultado de cada uma lado a lado.
-4. **Restaurar imagem original** desfaz tudo.
-5. **Salvar como PNG** grava o resultado.
+4. **Desfazer (Ctrl+Z)** volta a última operação; **Restaurar imagem original** volta ao arquivo aberto (e também pode ser desfeito).
+5. **Salvar imagem** grava o resultado no formato da extensão escolhida (PNG, BMP ou JPG). JPG tem perdas e destrói mensagens escondidas por esteganografia; use PNG ou BMP.
+
+Observações: imagens coloridas são mantidas em RGB (3 canais) e as transformações valem para cada canal; o canal alfa de PNGs é descartado ao abrir. "Normalizar exibição" só altera a exibição, não os dados.
 
 ---

@@ -9,7 +9,7 @@ namespace core {
         double linePairsPerMm = 0.0; 
     };
 
-    SpatialMetrics computeSpatialMetrics(Image& img);
+    SpatialMetrics computeSpatialMetrics(const Image& img);
 
     struct StorageMetrics {
         long long bits = 0;
@@ -18,6 +18,6 @@ namespace core {
         double megabytes = 0.0;
     };
 
-    StorageMetrics computeStorageMetrics(Image& img);
+    StorageMetrics computeStorageMetrics(const Image& img);
 
 }

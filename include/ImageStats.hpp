@@ -10,6 +10,6 @@ namespace core {
         double contrast = 0.0;  
     };
 
-    ImageStats computeStats(Image& img);
+    ImageStats computeStats(const Image& img);
 
 }

@@ -1,4 +1,5 @@
 #include "CenterPanel.hpp"
+#include "ImageTexture.hpp"
 #include "imgui.h"
 #include <cstdint>
 
@@ -10,6 +11,11 @@ void RenderCenterPanel(AppState& state, float width, float height) {
     ImGui::Separator();
 
     if (state.hasImage) {
+        if (ImGui::Checkbox("Normalizar exibição (min-max)", &state.displayNormalized)) {
+            RefreshTexture(state);
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("(só altera a exibição)");
         ImVec2 avail = ImGui::GetContentRegionAvail();
         float imgAspect = static_cast<float>(state.workingImage.getCols()) /
                            static_cast<float>(state.workingImage.getRows());

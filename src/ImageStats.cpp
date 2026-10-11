@@ -1,21 +1,22 @@
 #include "ImageStats.hpp"
+#include <cmath>
 
 namespace core {
 
-ImageStats computeStats(Image& img) {
+ImageStats computeStats(const Image& img) {
     ImageStats stats;
     bool any = false;
 
-    for (auto& row : img.getData()) {
-        for (int v : row) {
-            if (!any) {
-                stats.minValue = v;
-                stats.maxValue = v;
-                any = true;
-            } else {
-                if (v < stats.minValue) stats.minValue = v;
-                if (v > stats.maxValue) stats.maxValue = v;
-            }
+    // Considera todas as amostras (todos os canais).
+    for (float sample : img.samples()) {
+        int v = static_cast<int>(std::lround(sample));
+        if (!any) {
+            stats.minValue = v;
+            stats.maxValue = v;
+            any = true;
+        } else {
+            if (v < stats.minValue) stats.minValue = v;
+            if (v > stats.maxValue) stats.maxValue = v;
         }
     }
 

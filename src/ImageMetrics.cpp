@@ -2,7 +2,7 @@
 
 namespace core {
 
-SpatialMetrics computeSpatialMetrics(Image& img) {
+SpatialMetrics computeSpatialMetrics(const Image& img) {
     SpatialMetrics m;
     double dpi = img.getDpi();
     if (dpi <= 0) return m;
@@ -16,10 +16,11 @@ SpatialMetrics computeSpatialMetrics(Image& img) {
     return m;
 }
 
-StorageMetrics computeStorageMetrics(Image& img) {
+StorageMetrics computeStorageMetrics(const Image& img) {
     StorageMetrics m;
     m.bits = static_cast<long long>(img.getRows()) *
              static_cast<long long>(img.getCols()) *
+             static_cast<long long>(img.getChannels()) *
              static_cast<long long>(img.getBitsPerPixel());
     m.bytes = static_cast<double>(m.bits) / 8.0;
     m.kilobytes = m.bytes / 1024.0;

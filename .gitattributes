@@ -1,0 +1,5 @@
+# Normaliza os finais de linha: o repositorio guarda LF e cada sistema converte ao fazer checkout.
+* text=auto
+*.png binary
+*.jpg binary
+*.bmp binary

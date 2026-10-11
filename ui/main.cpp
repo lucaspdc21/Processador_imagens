@@ -116,6 +116,7 @@ int main() {
 
         glfwSwapBuffers(window);
     }
+    ui::ReleaseCompareTextures(state);
     glDeleteTextures(1, &texture);
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();

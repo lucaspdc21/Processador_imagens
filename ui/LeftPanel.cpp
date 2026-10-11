@@ -6,6 +6,13 @@
 
 namespace ui {
 
+// Texto cinza que quebra linha (o painel e estreito).
+static void TextDisabledWrapped(const char* text) {
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+    ImGui::TextWrapped("%s", text);
+    ImGui::PopStyleColor();
+}
+
 void RenderLeftPanel(AppState& state, float width, float height) {
     ImGui::BeginChild("PainelMetodos", ImVec2(width, height), true);
     ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Métodos e funções");
@@ -23,17 +30,34 @@ void RenderLeftPanel(AppState& state, float width, float height) {
         }
     }
 
+    // Ctrl+Z desfaz a ultima operacao (nao dispara enquanto se digita texto).
+    ImGuiIO& io = ImGui::GetIO();
+    if (state.hasImage && state.canUndo() && io.KeyCtrl && !io.WantTextInput &&
+        ImGui::IsKeyPressed(ImGuiKey_Z, false)) {
+        state.undo();
+        RefreshTexture(state);
+    }
+
     ImGui::BeginDisabled(!state.hasImage);
 
-    if (ImGui::Button("Salvar como PNG", ImVec2(-1, 0))) {
-        const char* filters[] = { "*.png" };
+    if (ImGui::Button("Salvar imagem (PNG, BMP ou JPG)", ImVec2(-1, 0))) {
+        const char* filters[] = { "*.png", "*.bmp", "*.jpg", "*.jpeg" };
         const char* savePath = tinyfd_saveFileDialog(
-            "Salvar imagem", "saida.png", 1, filters, "PNG");
+            "Salvar imagem", "saida.png", 4, filters, "Imagens (PNG, BMP, JPG)");
         if (savePath != nullptr) {
             std::string path(savePath);
             state.saveToPath(path);
         }
     }
+
+    TextDisabledWrapped("O formato vem da extensão do nome. JPG tem perdas.");
+
+    ImGui::BeginDisabled(!state.canUndo());
+    if (ImGui::Button("Desfazer (Ctrl+Z)", ImVec2(-1, 0))) {
+        state.undo();
+        RefreshTexture(state);
+    }
+    ImGui::EndDisabled();
 
     ImGui::Dummy(ImVec2(0, 10));
 
@@ -52,7 +76,7 @@ void RenderLeftPanel(AppState& state, float width, float height) {
         ImGui::Dummy(ImVec2(0, 10));
         ImGui::Text("Resolução espacial (reamostragem)");
         ImGui::SetNextItemWidth(-1);
-        ImGui::SliderInt("##resample", &state.resamplePercent, 5, 500, "%d%% do tamanho original");
+        ImGui::SliderInt("##resample", &state.resamplePercent, 5, 500, "%d%% do tamanho atual");
         ImGui::Text("Interpolação");
         int method = static_cast<int>(state.interpolationMethod);
         ImGui::RadioButton("Vizinho mais próximo", &method, 0);
@@ -85,6 +109,15 @@ void RenderLeftPanel(AppState& state, float width, float height) {
         ImGui::SeparatorText("1. Negativo");
         if (ImGui::Button("Aplicar negativo", ImVec2(-1, 0))) {
             state.applyNegative();
+            RefreshTexture(state);
+        }
+
+        // Brilho
+        ImGui::SeparatorText("1b. Brilho (s = r + b)");
+        ImGui::SetNextItemWidth(-1);
+        ImGui::SliderInt("##brilho", &state.brightnessValue, -255, 255, "b = %d");
+        if (ImGui::Button("Aplicar brilho", ImVec2(-1, 0))) {
+            state.applyBrightness();
             RefreshTexture(state);
         }
 
@@ -162,6 +195,8 @@ void RenderLeftPanel(AppState& state, float width, float height) {
 
         ImGui::Dummy(ImVec2(0, 6));
         ImGui::Text("Esconder mensagem (usa o bit 1 / LSB)");
+        TextDisabledWrapped("Qualquer operação depois de esconder altera esses bits e apaga a mensagem.");
+        TextDisabledWrapped("Esconda por último e salve em PNG ou BMP (JPG destrói a mensagem).");
         ImGui::SetNextItemWidth(-1);
         ImGui::InputText("##steganomsg", state.steganoMessageBuffer, sizeof(state.steganoMessageBuffer));
         ImGui::TextDisabled("Capacidade da imagem atual: %lld bytes", state.steganographyCapacityBytes());
