@@ -187,6 +187,14 @@ void RenderLeftPanel(AppState& state, float width, float height) {
             ImGui::TextWrapped("Mensagem extraída: %s", state.steganoExtractedMessage.c_str());
         }
 
+        // Equalizacao de histograma
+        ImGui::SeparatorText("7. Equalização de histograma");
+        ImGui::TextDisabled("Automática: s = (L-1) * soma de p(rj). Sem parâmetros.");
+        if (ImGui::Button("Equalizar histograma", ImVec2(-1, 0))) {
+            state.applyHistogramEqualization();
+            RefreshTexture(state);
+        }
+
         ImGui::Unindent();
     }
 

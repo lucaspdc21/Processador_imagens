@@ -19,7 +19,7 @@ void BuildCompareTextures(AppState& state) {
     core::Image& base = state.workingImage;
 
     std::vector<std::pair<std::string, core::Image>> results;
-    results.reserve(9);
+    results.reserve(10);
 
     results.emplace_back("Imagem atual", base);
 
@@ -56,6 +56,10 @@ void BuildCompareTextures(AppState& state) {
     core::Image plano = base;
     core::bitPlaneSlice(plano, state.bitPlaneSelected);
     results.emplace_back("6. Plano de bits " + std::to_string(state.bitPlaneSelected), plano);
+
+    core::Image equalizada = base;
+    core::equalizeHistogram(equalizada);
+    results.emplace_back("7. Equalização de histograma", equalizada);
 
     // Garante um slot de textura por resultado, reaproveitando os que ja existem
     // (evita bug)

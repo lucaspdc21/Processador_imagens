@@ -3,6 +3,7 @@
 #include <vector>
 #include "Image.hpp"
 #include "ImageResample.hpp"
+#include "ImageHistogram.hpp"
 
 namespace ui {
 
@@ -47,6 +48,12 @@ namespace ui {
         char steganoMessageBuffer[256] = ""; 
         std::string steganoExtractedMessage; 
 
+        // Histograma (cache: recalculado quando a imagem muda, ver RefreshTexture)
+        core::Histogram histogramWorking;
+        core::Histogram histogramOriginal;
+        bool histogramDirty = true;
+        bool histogramNormalized = false;   // false: h(rk) = nk | true: p(rk) = nk/MN
+
         //Janela de comparação de imagens
         bool showCompareWindow = false;
         bool compareTexturesBuilt = false;
@@ -80,6 +87,10 @@ namespace ui {
         void applyContrastStretch();
         void applyIntensitySlice();
         void applyBitPlaneSlice();
+        void applyHistogramEqualization();
+
+        // Recalcula os histogramas (atual e original) se a imagem mudou.
+        void updateHistograms();
 
         // Esteganografia LSB
         long long steganographyCapacityBytes();

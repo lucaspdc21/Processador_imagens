@@ -127,6 +127,19 @@ void AppState::applyBitPlaneSlice() {
     statusMessage = "Plano de bits " + std::to_string(bitPlaneSelected) + " extraído.";
 }
 
+void AppState::applyHistogramEqualization() {
+    if (!hasImage) return;
+    core::equalizeHistogram(workingImage);
+    statusMessage = "Equalização de histograma aplicada.";
+}
+
+void AppState::updateHistograms() {
+    if (!hasImage || !histogramDirty) return;
+    histogramWorking = core::computeHistogram(workingImage);
+    histogramOriginal = core::computeHistogram(originalImage);
+    histogramDirty = false;
+}
+
 long long AppState::steganographyCapacityBytes() {
     if (!hasImage) return 0;
     return core::steganographyCapacityBytes(workingImage);

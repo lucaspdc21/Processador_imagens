@@ -15,6 +15,7 @@ add_library(core
     src/ImageStats.cpp
     src/ImageMetrics.cpp
     src/ImageIntensity.cpp
+    src/ImageHistogram.cpp
 )
 
 target_include_directories(core PUBLIC

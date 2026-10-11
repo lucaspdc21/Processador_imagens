@@ -42,6 +42,7 @@ unsigned int UploadImageToTexture(core::Image& image, unsigned int existingTextu
 void RefreshTexture(AppState& state) {
     if (!state.hasImage) return;
     state.textureId = UploadImageToTexture(state.workingImage, state.textureId);
+    state.histogramDirty = true;
 }
 
 }
