@@ -3,7 +3,9 @@
 #include "ImageQuantization.hpp"
 #include "ImageResample.hpp"
 #include "ImageIntensity.hpp"
+#include "ImageConvolution.hpp"
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 
 namespace ui {
@@ -125,6 +127,63 @@ void AppState::applyBitPlaneSlice() {
     if (!hasImage) return;
     core::bitPlaneSlice(workingImage, bitPlaneSelected);
     statusMessage = "Plano de bits " + std::to_string(bitPlaneSelected) + " extraído.";
+}
+
+void AppState::setKernelSize(int newSize) {
+    if (!core::isValidKernelSize(newSize)) return;
+
+    const size_t oldCount = static_cast<size_t>(kernelSize) * static_cast<size_t>(kernelSize);
+    const bool oldIsConsistent = core::isValidKernelSize(kernelSize) && kernelValues.size() == oldCount;
+    if (newSize == kernelSize && oldIsConsistent) return;
+
+    std::vector<float> resized(static_cast<size_t>(newSize) * static_cast<size_t>(newSize), 0.0f);
+    if (oldIsConsistent) {
+        const int oldA = kernelSize / 2;
+        const int newA = newSize / 2;
+        const int common = std::min(oldA, newA);
+        for (int s = -common; s <= common; ++s) {
+            for (int t = -common; t <= common; ++t) {
+                resized[static_cast<size_t>((s + newA) * newSize + (t + newA))] =
+                    kernelValues[static_cast<size_t>((s + oldA) * kernelSize + (t + oldA))];
+            }
+        }
+    }
+    kernelValues = resized;
+    kernelSize = newSize;
+}
+
+void AppState::applyConvolution() {
+    if (!hasImage) return;
+
+    const size_t count = static_cast<size_t>(kernelSize) * static_cast<size_t>(kernelSize);
+    if (!core::isValidKernelSize(kernelSize) || kernelValues.size() != count) {
+        statusMessage = "Kernel inválido: o tamanho deve ser ímpar.";
+        return;
+    }
+
+    core::Kernel kernel(kernelSize);
+    for (size_t i = 0; i < count; ++i) {
+        kernel.weights[i] = static_cast<double>(kernelValues[i]);
+    }
+
+    if (kernelDivideBySum) {
+        double sum = core::kernelSum(kernel);
+        if (std::fabs(sum) < 1e-12) {
+            statusMessage = "A soma dos coeficientes é zero: não dá para dividir por ela.";
+            return;
+        }
+        for (double& w : kernel.weights) w /= sum;
+    }
+
+    core::FilterOperation operation = (filterOperation == 1) ? core::FilterOperation::Correlation
+                                                              : core::FilterOperation::Convolution;
+    core::BorderMode border = (filterBorder == 1) ? core::BorderMode::Replicate
+                                                  : core::BorderMode::Zero;
+
+    core::applyFilter(workingImage, kernel, operation, border, filterResultMode == 0);
+
+    statusMessage = "Filtro " + std::to_string(kernelSize) + "x" + std::to_string(kernelSize) +
+                    (filterOperation == 1 ? " aplicado (correlação)." : " aplicado (convolução).");
 }
 
 void AppState::applyHistogramEqualization() {

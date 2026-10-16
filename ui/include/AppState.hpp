@@ -54,6 +54,17 @@ namespace ui {
         bool histogramDirty = true;
         bool histogramNormalized = false;   // false: h(rk) = nk | true: p(rk) = nk/MN
 
+        // Filtro por convolucao (kernel generico quadrado de tamanho impar)
+        bool showConvolutionWindow = false;
+        int kernelSize = 3;
+        std::vector<float> kernelValues = {0.0f, 0.0f, 0.0f,
+                                           0.0f, 1.0f, 0.0f,
+                                           0.0f, 0.0f, 0.0f};   // linha a linha (identidade)
+        bool kernelDivideBySum = false;
+        int filterOperation = 0;    // 0: convolucao | 1: correlacao
+        int filterBorder = 0;       // 0: preencher com zeros | 1: replicar a borda
+        int filterResultMode = 0;   // 0: limitar a [0,255] | 1: manter valores (normaliza so na exibicao)
+
         //Janela de comparação de imagens
         bool showCompareWindow = false;
         bool compareTexturesBuilt = false;
@@ -91,6 +102,12 @@ namespace ui {
 
         // Recalcula os histogramas (atual e original) se a imagem mudou.
         void updateHistograms();
+
+        // Muda o tamanho do kernel (impar), preservando os coeficientes centrais.
+        void setKernelSize(int newSize);
+
+        // Aplica o kernel editado na imagem de trabalho.
+        void applyConvolution();
 
         // Esteganografia LSB
         long long steganographyCapacityBytes();

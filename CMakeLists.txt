@@ -16,6 +16,7 @@ add_library(core
     src/ImageMetrics.cpp
     src/ImageIntensity.cpp
     src/ImageHistogram.cpp
+    src/ImageConvolution.cpp
 )
 
 target_include_directories(core PUBLIC
@@ -77,6 +78,7 @@ add_executable(processador_gui
     ui/CenterPanel.cpp
     ui/RightPanel.cpp
     ui/CompareWindow.cpp
+    ui/ConvolutionWindow.cpp
 )
 target_include_directories(processador_gui PRIVATE ${TINYFD_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/ui)
 target_link_libraries(processador_gui PRIVATE core imgui tinyfiledialogs)

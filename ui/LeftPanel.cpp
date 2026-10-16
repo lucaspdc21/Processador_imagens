@@ -198,6 +198,18 @@ void RenderLeftPanel(AppState& state, float width, float height) {
         ImGui::Unindent();
     }
 
+    if (ImGui::CollapsingHeader("Filtragem espacial", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::Indent();
+
+        ImGui::SeparatorText("Filtro genérico por convolução");
+        ImGui::TextDisabled("Máscara quadrada de tamanho ímpar (3x3 até 15x15).");
+        if (ImGui::Button("Abrir editor de filtro", ImVec2(-1, 0))) {
+            state.showConvolutionWindow = true;
+        }
+
+        ImGui::Unindent();
+    }
+
     ImGui::Dummy(ImVec2(0, 10));
     if (ImGui::Button("Comparar todas as transformações", ImVec2(-1, 0))) {
         state.compareTexturesBuilt = false;

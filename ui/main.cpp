@@ -17,6 +17,7 @@
 #include "CenterPanel.hpp"
 #include "RightPanel.hpp"
 #include "CompareWindow.hpp"
+#include "ConvolutionWindow.hpp"
 
 void error_callback(int error, const char* description) {
     std::cerr << "Erro GLFW [" << error << "]: " << description << std::endl;
@@ -104,6 +105,10 @@ int main() {
 
         if (state.showCompareWindow) {
             ui::RenderCompareWindow(state);
+        }
+
+        if (state.showConvolutionWindow) {
+            ui::RenderConvolutionWindow(state);
         }
 
         ImGui::Render();

@@ -1,4 +1,6 @@
 #include "ImageTexture.hpp"
+#include "ImageConvolution.hpp"
+#include "ImageStats.hpp"
 #include <GLFW/glfw3.h>
 #include <algorithm>
 #include <vector>
@@ -15,8 +17,19 @@ unsigned int UploadImageToTexture(core::Image& image, unsigned int existingTextu
         glGenTextures(1, &texture);
     }
 
+    // Filtros com resultado nao limitado geram valores negativos ou acima de 255.
+    // Nesse caso a imagem e normalizada (min-max) apenas para exibicao; a
+    // imagem de trabalho nao e alterada.
+    core::ImageStats stats = core::computeStats(image);
+    core::Image normalized(0, 0);
+    core::Image* shown = &image;
+    if (stats.minValue < 0 || stats.maxValue > 255) {
+        normalized = core::normalizeForDisplay(image);
+        shown = &normalized;
+    }
+
     std::vector<unsigned char> rgba(static_cast<size_t>(rows) * cols * 4);
-    const auto& data = image.getData();
+    const auto& data = shown->getData();
     for (int y = 0; y < rows; ++y) {
         for (int x = 0; x < cols; ++x) {
             int v = std::max(0, std::min(data[y][x], 255));
