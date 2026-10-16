@@ -4,6 +4,7 @@
 #include "Image.hpp"
 #include "ImageResample.hpp"
 #include "ImageHistogram.hpp"
+#include "ImageConvolution.hpp"
 
 namespace ui {
 
@@ -65,6 +66,21 @@ namespace ui {
         int filterBorder = 0;       // 0: preencher com zeros | 1: replicar a borda
         int filterResultMode = 0;   // 0: limitar a [0,255] | 1: manter valores (normaliza so na exibicao)
 
+        // Filtros espaciais: suavizacao, mediana, Laplaciano, high-boost, Sobel
+        int smoothType = 0;              // 0: media simples | 1: media ponderada (1-2-1) | 2: gaussiano
+        int smoothSize = 3;
+        float gaussianSigma = 1.0f;
+        int medianSize = 3;
+        int laplacianChoice = 0;         // 0: vizinhos-4 (centro -4) | 1: vizinhos-8 (centro -8) | 2 e 3: centro positivo
+        float highBoostK = 2.0f;
+        bool gradientApproximate = false;   // true: |gx| + |gy| | false: raiz(gx^2 + gy^2)
+        int spatialBorder = 1;           // 0: zeros | 1: replicar a borda
+        bool normalizeNextDisplay = false;  // pede a RefreshTexture para normalizar so a exibicao
+
+        core::BorderMode spatialBorderMode() const {
+            return spatialBorder == 1 ? core::BorderMode::Replicate : core::BorderMode::Zero;
+        }
+
         //Janela de comparação de imagens
         bool showCompareWindow = false;
         bool compareTexturesBuilt = false;
@@ -108,6 +124,18 @@ namespace ui {
 
         // Aplica o kernel editado na imagem de trabalho.
         void applyConvolution();
+
+        // Kernel de suavizacao escolhido (media simples, ponderada ou gaussiano).
+        core::Kernel smoothingKernel() const;
+
+        void applySmoothing();
+        void applyMedian();
+        void showLaplacian();            // Laplaciano puro (exibido normalizado)
+        void applyLaplacianSharpen();    // g = f + c * laplaciano
+        void applyHighBoost();           // g = f + k * (f - f_borrada)
+        void applySobelX();
+        void applySobelY();
+        void applyGradientMagnitude();
 
         // Esteganografia LSB
         long long steganographyCapacityBytes();

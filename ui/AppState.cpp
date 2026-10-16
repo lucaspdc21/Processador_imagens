@@ -4,6 +4,7 @@
 #include "ImageResample.hpp"
 #include "ImageIntensity.hpp"
 #include "ImageConvolution.hpp"
+#include "ImageSpatialFilters.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -184,6 +185,112 @@ void AppState::applyConvolution() {
 
     statusMessage = "Filtro " + std::to_string(kernelSize) + "x" + std::to_string(kernelSize) +
                     (filterOperation == 1 ? " aplicado (correlação)." : " aplicado (convolução).");
+}
+
+namespace {
+
+    void DecodeLaplacian(int choice, core::LaplacianKind& kind, bool& negativeCenter) {
+        kind = (choice == 1 || choice == 3) ? core::LaplacianKind::Neighbors8
+                                            : core::LaplacianKind::Neighbors4;
+        negativeCenter = (choice == 0 || choice == 1);
+    }
+
+    std::string SizeText(int size) {
+        return std::to_string(size) + "x" + std::to_string(size);
+    }
+
+}
+
+core::Kernel AppState::smoothingKernel() const {
+    switch (smoothType) {
+        case 1:  return core::binomialKernel(smoothSize);
+        case 2:  return core::gaussianKernel(smoothSize, static_cast<double>(gaussianSigma));
+        default: return core::boxKernel(smoothSize);
+    }
+}
+
+void AppState::applySmoothing() {
+    if (!hasImage) return;
+    if (!core::isValidKernelSize(smoothSize)) {
+        statusMessage = "Tamanho de filtro inválido: use um valor ímpar.";
+        return;
+    }
+
+    core::applyFilter(workingImage, smoothingKernel(), core::FilterOperation::Correlation,
+                      spatialBorderMode(), true);
+
+    const char* names[] = {"média simples", "média ponderada (1-2-1)", "gaussiano"};
+    statusMessage = std::string("Suavização aplicada: ") + names[std::max(0, std::min(smoothType, 2))] +
+                    " " + SizeText(smoothSize) + ".";
+}
+
+void AppState::applyMedian() {
+    if (!hasImage) return;
+    if (!core::isValidKernelSize(medianSize)) {
+        statusMessage = "Tamanho de filtro inválido: use um valor ímpar.";
+        return;
+    }
+    workingImage = core::medianFilter(workingImage, medianSize, spatialBorderMode());
+    statusMessage = "Filtro da mediana " + SizeText(medianSize) + " aplicado.";
+}
+
+void AppState::showLaplacian() {
+    if (!hasImage) return;
+    core::LaplacianKind kind;
+    bool negativeCenter;
+    DecodeLaplacian(laplacianChoice, kind, negativeCenter);
+
+    workingImage = core::laplacian(workingImage, kind, negativeCenter, spatialBorderMode());
+    normalizeNextDisplay = true;
+    statusMessage = "Laplaciano calculado (exibido normalizado). Use 'Restaurar imagem original' para voltar.";
+}
+
+void AppState::applyLaplacianSharpen() {
+    if (!hasImage) return;
+    core::LaplacianKind kind;
+    bool negativeCenter;
+    DecodeLaplacian(laplacianChoice, kind, negativeCenter);
+
+    workingImage = core::sharpenLaplacian(workingImage, kind, negativeCenter, spatialBorderMode());
+    statusMessage = std::string("Aguçamento pelo Laplaciano aplicado (c = ") + (negativeCenter ? "-1" : "+1") + ").";
+}
+
+void AppState::applyHighBoost() {
+    if (!hasImage) return;
+    if (!core::isValidKernelSize(smoothSize)) {
+        statusMessage = "Tamanho de filtro inválido: use um valor ímpar.";
+        return;
+    }
+
+    workingImage = core::highBoost(workingImage, smoothingKernel(), static_cast<double>(highBoostK),
+                                   spatialBorderMode());
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%.2f", highBoostK);
+    statusMessage = std::string(highBoostK > 1.0f ? "High-boost aplicado (k = " : "Máscara de nitidez aplicada (k = ") +
+                    buf + ").";
+}
+
+void AppState::applySobelX() {
+    if (!hasImage) return;
+    workingImage = core::sobelX(workingImage, spatialBorderMode());
+    normalizeNextDisplay = true;
+    statusMessage = "Sobel X aplicado (exibido normalizado). Use 'Restaurar imagem original' para voltar.";
+}
+
+void AppState::applySobelY() {
+    if (!hasImage) return;
+    workingImage = core::sobelY(workingImage, spatialBorderMode());
+    normalizeNextDisplay = true;
+    statusMessage = "Sobel Y aplicado (exibido normalizado). Use 'Restaurar imagem original' para voltar.";
+}
+
+void AppState::applyGradientMagnitude() {
+    if (!hasImage) return;
+    workingImage = core::gradientMagnitude(workingImage, spatialBorderMode(), gradientApproximate);
+    normalizeNextDisplay = true;
+    statusMessage = std::string("Magnitude do gradiente calculada (") +
+                    (gradientApproximate ? "|gx| + |gy|" : "raiz de gx^2 + gy^2") +
+                    "; exibida normalizada). Use 'Restaurar imagem original' para voltar.";
 }
 
 void AppState::applyHistogramEqualization() {

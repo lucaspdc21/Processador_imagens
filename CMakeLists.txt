@@ -17,6 +17,7 @@ add_library(core
     src/ImageIntensity.cpp
     src/ImageHistogram.cpp
     src/ImageConvolution.cpp
+    src/ImageSpatialFilters.cpp
 )
 
 target_include_directories(core PUBLIC

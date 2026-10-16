@@ -7,7 +7,7 @@
 
 namespace ui {
 
-unsigned int UploadImageToTexture(core::Image& image, unsigned int existingTextureId) {
+unsigned int UploadImageToTexture(core::Image& image, unsigned int existingTextureId, bool forceNormalize) {
     int rows = image.getRows();
     int cols = image.getCols();
     if (rows <= 0 || cols <= 0) return existingTextureId;
@@ -23,7 +23,7 @@ unsigned int UploadImageToTexture(core::Image& image, unsigned int existingTextu
     core::ImageStats stats = core::computeStats(image);
     core::Image normalized(0, 0);
     core::Image* shown = &image;
-    if (stats.minValue < 0 || stats.maxValue > 255) {
+    if (forceNormalize || stats.minValue < 0 || stats.maxValue > 255) {
         normalized = core::normalizeForDisplay(image);
         shown = &normalized;
     }
@@ -54,7 +54,8 @@ unsigned int UploadImageToTexture(core::Image& image, unsigned int existingTextu
 
 void RefreshTexture(AppState& state) {
     if (!state.hasImage) return;
-    state.textureId = UploadImageToTexture(state.workingImage, state.textureId);
+    state.textureId = UploadImageToTexture(state.workingImage, state.textureId, state.normalizeNextDisplay);
+    state.normalizeNextDisplay = false;
     state.histogramDirty = true;
 }
 

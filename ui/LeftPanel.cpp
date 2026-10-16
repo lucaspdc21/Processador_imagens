@@ -2,6 +2,7 @@
 #include "ImageTexture.hpp"
 #include "imgui.h"
 #include "tinyfiledialogs.h"
+#include <cstdio>
 #include <string>
 
 namespace ui {
@@ -37,43 +38,6 @@ void RenderLeftPanel(AppState& state, float width, float height) {
 
     ImGui::Dummy(ImVec2(0, 10));
 
-    if (ImGui::CollapsingHeader("Resolução (intensidade / espacial)", ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::Indent();
-
-        ImGui::Text("Resolução de intensidade (k bits)");
-        ImGui::SetNextItemWidth(-1);
-        ImGui::SliderInt("##bits", &state.bitsPerPixel, 1, 8, "k = %d bits");
-        ImGui::Text("L = 2^k = %lld níveis", 1LL << state.bitsPerPixel);
-        if (ImGui::Button("Aplicar quantização", ImVec2(-1, 0))) {
-            state.applyQuantization();
-            RefreshTexture(state);
-        }
-
-        ImGui::Dummy(ImVec2(0, 10));
-        ImGui::Text("Resolução espacial (reamostragem)");
-        ImGui::SetNextItemWidth(-1);
-        ImGui::SliderInt("##resample", &state.resamplePercent, 5, 500, "%d%% do tamanho original");
-        ImGui::Text("Interpolação");
-        int method = static_cast<int>(state.interpolationMethod);
-        ImGui::RadioButton("Vizinho mais próximo", &method, 0);
-        ImGui::RadioButton("Bilinear", &method, 1);
-        ImGui::RadioButton("Bicúbica", &method, 2);
-        state.interpolationMethod = static_cast<core::resampleType>(method);
-
-        if (ImGui::Button("Aplicar reamostragem", ImVec2(-1, 0))) {
-            state.applyResample();
-            RefreshTexture(state);
-        }
-
-        ImGui::Dummy(ImVec2(0, 10));
-        ImGui::Text("Resolução espacial (DPI)");
-        ImGui::SetNextItemWidth(-1);
-        if (ImGui::InputFloat("##dpi", &state.dpiValue, 1.0f, 10.0f, "%.1f dpi")) {
-            state.applyDpi(state.dpiValue);
-        }
-
-        ImGui::Unindent();
-    }
 
     ImGui::Dummy(ImVec2(0, 6));
 
@@ -205,6 +169,95 @@ void RenderLeftPanel(AppState& state, float width, float height) {
         ImGui::TextDisabled("Máscara quadrada de tamanho ímpar (3x3 até 15x15).");
         if (ImGui::Button("Abrir editor de filtro", ImVec2(-1, 0))) {
             state.showConvolutionWindow = true;
+        }
+
+        // Combo de tamanho de filtro (3x3 ate 15x15)
+        auto sizeCombo = [](const char* id, int& size) {
+            char current[16];
+            std::snprintf(current, sizeof(current), "%dx%d", size, size);
+            ImGui::SetNextItemWidth(-1);
+            if (ImGui::BeginCombo(id, current)) {
+                for (int s = 3; s <= 15; s += 2) {
+                    char item[16];
+                    std::snprintf(item, sizeof(item), "%dx%d", s, s);
+                    if (ImGui::Selectable(item, s == size)) size = s;
+                }
+                ImGui::EndCombo();
+            }
+        };
+
+        ImGui::Dummy(ImVec2(0, 4));
+        ImGui::Text("Borda dos filtros abaixo:");
+        ImGui::RadioButton("Replicar##spBorder", &state.spatialBorder, 1);
+        ImGui::SameLine();
+        ImGui::RadioButton("Zeros##spBorder", &state.spatialBorder, 0);
+
+        // ---- Suavizacao
+        ImGui::SeparatorText("Suavização (média / gaussiano)");
+        const char* smoothNames[] = {"Média simples", "Média ponderada (1-2-1)", "Gaussiano"};
+        ImGui::SetNextItemWidth(-1);
+        ImGui::Combo("##smoothType", &state.smoothType, smoothNames, 3);
+        ImGui::Text("Tamanho:");
+        sizeCombo("##smoothSize", state.smoothSize);
+        if (state.smoothType == 2) {
+            ImGui::SetNextItemWidth(-1);
+            ImGui::SliderFloat("##sigma", &state.gaussianSigma, 0.3f, 6.0f, "sigma = %.2f");
+        }
+        if (ImGui::Button("Aplicar suavização", ImVec2(-1, 0))) {
+            state.applySmoothing();
+            RefreshTexture(state);
+        }
+
+        // ---- Mediana
+        ImGui::SeparatorText("Filtro da mediana");
+        ImGui::Text("Tamanho:");
+        sizeCombo("##medianSize", state.medianSize);
+        if (ImGui::Button("Aplicar mediana", ImVec2(-1, 0))) {
+            state.applyMedian();
+            RefreshTexture(state);
+        }
+
+        // ---- Laplaciano
+        ImGui::SeparatorText("Aguçamento: Laplaciano");
+        const char* lapNames[] = {"Vizinhos-4 (centro -4)", "Vizinhos-8 (centro -8)",
+                                  "Vizinhos-4 (centro +4)", "Vizinhos-8 (centro +8)"};
+        ImGui::SetNextItemWidth(-1);
+        ImGui::Combo("##lapKind", &state.laplacianChoice, lapNames, 4);
+        ImGui::TextDisabled("g = f + c * laplaciano (c = -1 se centro negativo)");
+        if (ImGui::Button("Mostrar Laplaciano (normalizado)", ImVec2(-1, 0))) {
+            state.showLaplacian();
+            RefreshTexture(state);
+        }
+        if (ImGui::Button("Aguçar com Laplaciano", ImVec2(-1, 0))) {
+            state.applyLaplacianSharpen();
+            RefreshTexture(state);
+        }
+
+        // ---- High-boost
+        ImGui::SeparatorText("Aguçamento: High-boost");
+        ImGui::TextDisabled("g = f + k * (f - borrada). Usa a suavização escolhida acima.");
+        ImGui::SetNextItemWidth(-1);
+        ImGui::SliderFloat("##hbk", &state.highBoostK, 0.0f, 10.0f, "k = %.2f");
+        if (ImGui::Button("Aplicar high-boost", ImVec2(-1, 0))) {
+            state.applyHighBoost();
+            RefreshTexture(state);
+        }
+        ImGui::TextDisabled("k = 1: máscara de nitidez | k > 1: high-boost");
+
+        // ---- Sobel e gradiente
+        ImGui::SeparatorText("Bordas: Sobel e gradiente");
+        if (ImGui::Button("Sobel X", ImVec2(-1, 0))) {
+            state.applySobelX();
+            RefreshTexture(state);
+        }
+        if (ImGui::Button("Sobel Y", ImVec2(-1, 0))) {
+            state.applySobelY();
+            RefreshTexture(state);
+        }
+        ImGui::Checkbox("Aproximar por |gx| + |gy|", &state.gradientApproximate);
+        if (ImGui::Button("Magnitude do gradiente", ImVec2(-1, 0))) {
+            state.applyGradientMagnitude();
+            RefreshTexture(state);
         }
 
         ImGui::Unindent();
