@@ -9,6 +9,9 @@ endif()
 
 add_library(core
     src/Image.cpp
+    src/ColorImage.cpp
+    src/ColorSpace.cpp
+    src/ImageColor.cpp
     src/ImageLoad.cpp
     src/ImageQuantization.cpp
     src/ImageResample.cpp
@@ -83,3 +86,7 @@ add_executable(processador_gui
 )
 target_include_directories(processador_gui PRIVATE ${TINYFD_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/ui)
 target_link_libraries(processador_gui PRIVATE core imgui tinyfiledialogs)
+
+# Testes do nucleo de cor (RGB <-> HSI, cinza, chroma-key...): ./build/color_tests
+add_executable(color_tests tests/color_tests.cpp)
+target_link_libraries(color_tests PRIVATE core)

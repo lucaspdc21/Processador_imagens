@@ -45,6 +45,16 @@ HistogramStats computeHistogramStats(const Histogram& h) {
         s.variance += d * d * p[i];
     }
     s.stdDev = std::sqrt(s.variance);
+
+    // mediana: primeiro nivel em que a distribuicao acumulada chega a 1/2
+    double cumulative = 0.0;
+    for (size_t i = 0; i < p.size(); ++i) {
+        cumulative += p[i];
+        if (cumulative >= 0.5) {
+            s.median = static_cast<int>(i);
+            break;
+        }
+    }
     return s;
 }
 

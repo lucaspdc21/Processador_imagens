@@ -1,13 +1,14 @@
 #include "ImageTexture.hpp"
 #include "ImageConvolution.hpp"
 #include "ImageStats.hpp"
+#include "ImageColor.hpp"
 #include <GLFW/glfw3.h>
 #include <algorithm>
 #include <vector>
 
 namespace ui {
 
-unsigned int UploadImageToTexture(core::Image& image, unsigned int existingTextureId, bool forceNormalize) {
+unsigned int UploadImageToTexture(core::ColorImage& image, unsigned int existingTextureId, bool forceNormalize) {
     int rows = image.getRows();
     int cols = image.getCols();
     if (rows <= 0 || cols <= 0) return existingTextureId;
@@ -21,22 +22,23 @@ unsigned int UploadImageToTexture(core::Image& image, unsigned int existingTextu
     // Nesse caso a imagem e normalizada (min-max) apenas para exibicao; a
     // imagem de trabalho nao e alterada.
     core::ImageStats stats = core::computeStats(image);
-    core::Image normalized(0, 0);
-    core::Image* shown = &image;
+    core::ColorImage normalized;
+    core::ColorImage* shown = &image;
     if (forceNormalize || stats.minValue < 0 || stats.maxValue > 255) {
         normalized = core::normalizeForDisplay(image);
         shown = &normalized;
     }
 
     std::vector<unsigned char> rgba(static_cast<size_t>(rows) * cols * 4);
-    const auto& data = shown->getData();
+    const auto& dataR = shown->r().getData();
+    const auto& dataG = shown->g().getData();
+    const auto& dataB = shown->b().getData();
     for (int y = 0; y < rows; ++y) {
         for (int x = 0; x < cols; ++x) {
-            int v = std::max(0, std::min(data[y][x], 255));
             size_t idx = (static_cast<size_t>(y) * cols + x) * 4;
-            rgba[idx + 0] = static_cast<unsigned char>(v);
-            rgba[idx + 1] = static_cast<unsigned char>(v);
-            rgba[idx + 2] = static_cast<unsigned char>(v);
+            rgba[idx + 0] = static_cast<unsigned char>(std::max(0, std::min(dataR[y][x], 255)));
+            rgba[idx + 1] = static_cast<unsigned char>(std::max(0, std::min(dataG[y][x], 255)));
+            rgba[idx + 2] = static_cast<unsigned char>(std::max(0, std::min(dataB[y][x], 255)));
             rgba[idx + 3] = 255;
         }
     }
@@ -54,7 +56,13 @@ unsigned int UploadImageToTexture(core::Image& image, unsigned int existingTextu
 
 void RefreshTexture(AppState& state) {
     if (!state.hasImage) return;
-    state.textureId = UploadImageToTexture(state.workingImage, state.textureId, state.normalizeNextDisplay);
+    // Visualizacao de um plano (R, G, B, H, S ou I): so o que e exibido muda
+    if (state.colorView() != core::ColorView::Color) {
+        core::ColorImage view = core::makeView(state.workingImage, state.colorView());
+        state.textureId = UploadImageToTexture(view, state.textureId, state.normalizeNextDisplay);
+    } else {
+        state.textureId = UploadImageToTexture(state.workingImage, state.textureId, state.normalizeNextDisplay);
+    }
     state.normalizeNextDisplay = false;
     state.histogramDirty = true;
 }

@@ -5,6 +5,7 @@
 #include "ImageIntensity.hpp"
 #include "ImageConvolution.hpp"
 #include "ImageSpatialFilters.hpp"
+#include "ImageStats.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -13,7 +14,7 @@ namespace ui {
 
 bool AppState::loadFromPath(std::string& path) {
     std::string pathCopy = path;
-    core::Image loaded(0, 0);
+    core::ColorImage loaded;
     if (!core::loadImage(pathCopy, loaded)) {
         statusMessage = "Falha ao carregar a imagem: " + pathCopy;
         return false;
@@ -25,6 +26,8 @@ bool AppState::loadFromPath(std::string& path) {
     bitsPerPixel = workingImage.getBitsPerPixel();
     dpiValue = static_cast<float>(workingImage.getDpi());
     resamplePercent = 100;
+    viewChoice = 0;
+    chromaPicking = false;
     statusMessage = "Imagem carregada: " + pathCopy;
     return true;
 }
@@ -41,7 +44,8 @@ bool AppState::saveToPath(std::string& path) {
 
 void AppState::applyQuantization() {
     if (!hasImage) return;
-    core::quantize(workingImage, bitsPerPixel);
+    core::applyToPlanes(workingImage, core::ColorTarget::ChannelsRGB,
+                        [&](core::Image& p) { core::quantize(p, bitsPerPixel); });
     statusMessage = "Quantização aplicada (posterização).";
 }
 
@@ -53,8 +57,10 @@ void AppState::applyResample() {
 
     // Parte sempre da original para nao acumular perdas de chamadas anteriores
     workingImage = originalImage;
-    core::quantize(workingImage, bitsPerPixel);
-    core::resample(workingImage, newRows, newCols, interpolationMethod);
+    core::applyToPlanes(workingImage, core::ColorTarget::ChannelsRGB, [&](core::Image& p) {
+        core::quantize(p, bitsPerPixel);
+        core::resample(p, newRows, newCols, interpolationMethod);
+    });
     if (resamplePercent < 100) {
         // Amplia de volta ao tamanho original para tornar visivel o efeito de
         // baixa resolucao espacial (pixelizacao)
@@ -77,18 +83,22 @@ void AppState::restoreOriginal() {
     workingImage = originalImage;
     bitsPerPixel = workingImage.getBitsPerPixel();
     resamplePercent = 100;
+    chromaPicking = false;
     statusMessage = "Imagem restaurada ao estado original.";
 }
 
 void AppState::applyNegative() {
     if (!hasImage) return;
-    core::negative(workingImage);
+    // O negativo de uma imagem colorida e o complemento de cor, calculado em
+    // RGB canal a canal (nao tem equivalente exato no HSI)
+    core::applyToPlanes(workingImage, core::ColorTarget::ChannelsRGB, [](core::Image& p) { core::negative(p); });
     statusMessage = "Negativo da imagem aplicado.";
 }
 
 void AppState::applyBrightness() {
     if (!hasImage) return;
-    core::brightness(workingImage, static_cast<double>(brightnessFactor));
+    core::applyToPlanes(workingImage, colorTarget(),
+                        [&](core::Image& p) { core::brightness(p, static_cast<double>(brightnessFactor)); });
     char buf[32];
     std::snprintf(buf, sizeof(buf), "%.2f", brightnessFactor);
     statusMessage = std::string("Brilho aplicado (k = ") + buf + ").";
@@ -96,37 +106,50 @@ void AppState::applyBrightness() {
 
 void AppState::applyThreshold() {
     if (!hasImage) return;
-    core::threshold(workingImage, thresholdValue);
+    core::applyToPlanes(workingImage, colorTarget(), [&](core::Image& p) { core::threshold(p, thresholdValue); });
     statusMessage = "Limiarização aplicada (m = " + std::to_string(thresholdValue) + ").";
 }
 
 void AppState::applyLogTransform() {
     if (!hasImage) return;
-    core::logTransform(workingImage, static_cast<double>(logConstant), logAutoConstant);
+    // Constante automatica calculada com o maior valor dos 3 planos, para que
+    // R, G e B usem a mesma funcao (senao as cores mudariam)
+    double c = static_cast<double>(logConstant);
+    if (logAutoConstant) {
+        int maxVal = core::computeStats(workingImage).maxValue;
+        c = (maxVal <= 0) ? 1.0 : 255.0 / std::log(1.0 + static_cast<double>(maxVal));
+    }
+    core::applyToPlanes(workingImage, colorTarget(), [&](core::Image& p) { core::logTransform(p, c, false); });
     statusMessage = "Transformação logarítmica aplicada.";
 }
 
 void AppState::applyGammaCorrection() {
     if (!hasImage) return;
-    core::gammaCorrection(workingImage, static_cast<double>(gammaValue), static_cast<double>(gammaConstant));
+    core::applyToPlanes(workingImage, colorTarget(), [&](core::Image& p) {
+        core::gammaCorrection(p, static_cast<double>(gammaValue), static_cast<double>(gammaConstant));
+    });
     statusMessage = "Correção de gama aplicada (gama = " + std::to_string(gammaValue) + ").";
 }
 
 void AppState::applyContrastStretch() {
     if (!hasImage) return;
-    core::contrastStretch(workingImage, stretchR1, stretchS1, stretchR2, stretchS2);
+    core::applyToPlanes(workingImage, colorTarget(), [&](core::Image& p) {
+        core::contrastStretch(p, stretchR1, stretchS1, stretchR2, stretchS2);
+    });
     statusMessage = "Alargamento de contraste aplicado.";
 }
 
 void AppState::applyIntensitySlice() {
     if (!hasImage) return;
-    core::intensitySlice(workingImage, sliceMin, sliceMax, sliceHighlight, slicePreserveBackground);
+    core::applyToPlanes(workingImage, colorTarget(), [&](core::Image& p) {
+        core::intensitySlice(p, sliceMin, sliceMax, sliceHighlight, slicePreserveBackground);
+    });
     statusMessage = "Fatiamento de níveis de intensidade aplicado.";
 }
 
 void AppState::applyBitPlaneSlice() {
     if (!hasImage) return;
-    core::bitPlaneSlice(workingImage, bitPlaneSelected);
+    core::applyToPlanes(workingImage, colorTarget(), [&](core::Image& p) { core::bitPlaneSlice(p, bitPlaneSelected); });
     statusMessage = "Plano de bits " + std::to_string(bitPlaneSelected) + " extraído.";
 }
 
@@ -181,7 +204,12 @@ void AppState::applyConvolution() {
     core::BorderMode border = (filterBorder == 1) ? core::BorderMode::Replicate
                                                   : core::BorderMode::Zero;
 
-    core::applyFilter(workingImage, kernel, operation, border, filterResultMode == 0);
+    // Filtro linear: equivalente por canal. Com 'manter valores' o resultado
+    // sai de [0, 255] e so faz sentido por canal RGB.
+    core::ColorTarget target = (filterResultMode == 0) ? colorTarget() : core::ColorTarget::ChannelsRGB;
+    core::applyToPlanes(workingImage, target, [&](core::Image& p) {
+        core::applyFilter(p, kernel, operation, border, filterResultMode == 0);
+    });
 
     statusMessage = "Filtro " + std::to_string(kernelSize) + "x" + std::to_string(kernelSize) +
                     (filterOperation == 1 ? " aplicado (correlação)." : " aplicado (convolução).");
@@ -216,8 +244,10 @@ void AppState::applySmoothing() {
         return;
     }
 
-    core::applyFilter(workingImage, smoothingKernel(), core::FilterOperation::Correlation,
-                      spatialBorderMode(), true);
+    const core::Kernel kernel = smoothingKernel();
+    core::applyToPlanes(workingImage, colorTarget(), [&](core::Image& p) {
+        core::applyFilter(p, kernel, core::FilterOperation::Correlation, spatialBorderMode(), true);
+    });
 
     const char* names[] = {"média simples", "média ponderada (1-2-1)", "gaussiano"};
     statusMessage = std::string("Suavização aplicada: ") + names[std::max(0, std::min(smoothType, 2))] +
@@ -230,7 +260,9 @@ void AppState::applyMedian() {
         statusMessage = "Tamanho de filtro inválido: use um valor ímpar.";
         return;
     }
-    workingImage = core::medianFilter(workingImage, medianSize, spatialBorderMode());
+    // Filtro de ordem: por canal pode criar cores falsas; use "so I" para evitar
+    core::mapPlanes(workingImage, colorTarget(),
+                    [&](core::Image& p) { return core::medianFilter(p, medianSize, spatialBorderMode()); });
     statusMessage = "Filtro da mediana " + SizeText(medianSize) + " aplicado.";
 }
 
@@ -240,7 +272,8 @@ void AppState::showLaplacian() {
     bool negativeCenter;
     DecodeLaplacian(laplacianChoice, kind, negativeCenter);
 
-    workingImage = core::laplacian(workingImage, kind, negativeCenter, spatialBorderMode());
+    core::mapPlanes(workingImage, core::ColorTarget::ChannelsRGB,
+                    [&](core::Image& p) { return core::laplacian(p, kind, negativeCenter, spatialBorderMode()); });
     normalizeNextDisplay = true;
     statusMessage = "Laplaciano calculado (exibido normalizado). Use 'Restaurar imagem original' para voltar.";
 }
@@ -251,7 +284,9 @@ void AppState::applyLaplacianSharpen() {
     bool negativeCenter;
     DecodeLaplacian(laplacianChoice, kind, negativeCenter);
 
-    workingImage = core::sharpenLaplacian(workingImage, kind, negativeCenter, spatialBorderMode());
+    core::mapPlanes(workingImage, colorTarget(), [&](core::Image& p) {
+        return core::sharpenLaplacian(p, kind, negativeCenter, spatialBorderMode());
+    });
     statusMessage = std::string("Aguçamento pelo Laplaciano aplicado (c = ") + (negativeCenter ? "-1" : "+1") + ").";
 }
 
@@ -262,8 +297,10 @@ void AppState::applyHighBoost() {
         return;
     }
 
-    workingImage = core::highBoost(workingImage, smoothingKernel(), static_cast<double>(highBoostK),
-                                   spatialBorderMode());
+    const core::Kernel blur = smoothingKernel();
+    core::mapPlanes(workingImage, colorTarget(), [&](core::Image& p) {
+        return core::highBoost(p, blur, static_cast<double>(highBoostK), spatialBorderMode());
+    });
     char buf[32];
     std::snprintf(buf, sizeof(buf), "%.2f", highBoostK);
     statusMessage = std::string(highBoostK > 1.0f ? "High-boost aplicado (k = " : "Máscara de nitidez aplicada (k = ") +
@@ -272,43 +309,48 @@ void AppState::applyHighBoost() {
 
 void AppState::applySobelX() {
     if (!hasImage) return;
-    workingImage = core::sobelX(workingImage, spatialBorderMode());
+    core::mapPlanes(workingImage, core::ColorTarget::ChannelsRGB,
+                    [&](core::Image& p) { return core::sobelX(p, spatialBorderMode()); });
     normalizeNextDisplay = true;
     statusMessage = "Sobel X aplicado (exibido normalizado). Use 'Restaurar imagem original' para voltar.";
 }
 
 void AppState::applySobelY() {
     if (!hasImage) return;
-    workingImage = core::sobelY(workingImage, spatialBorderMode());
+    core::mapPlanes(workingImage, core::ColorTarget::ChannelsRGB,
+                    [&](core::Image& p) { return core::sobelY(p, spatialBorderMode()); });
     normalizeNextDisplay = true;
     statusMessage = "Sobel Y aplicado (exibido normalizado). Use 'Restaurar imagem original' para voltar.";
 }
 
 void AppState::applyGradientMagnitude() {
     if (!hasImage) return;
-    workingImage = core::gradientMagnitude(workingImage, spatialBorderMode(), gradientApproximate);
+    workingImage = core::gradientMagnitudeColor(workingImage, spatialBorderMode(), gradientApproximate,
+                                                gradientDiZenzo);
     normalizeNextDisplay = true;
     statusMessage = std::string("Magnitude do gradiente calculada (") +
                     (gradientApproximate ? "|gx| + |gy|" : "raiz de gx^2 + gy^2") +
+                    (gradientDiZenzo ? ", gradiente vetorial de Di Zenzo" : ", soma dos canais R, G e B") +
                     "; exibida normalizada). Use 'Restaurar imagem original' para voltar.";
 }
 
 void AppState::applyHistogramEqualization() {
     if (!hasImage) return;
-    core::equalizeHistogram(workingImage);
-    statusMessage = "Equalização de histograma aplicada.";
+    // Imagem colorida: equaliza so o plano I do HSI (H e S nao mudam)
+    core::equalizeHistogramHSI(workingImage, static_cast<double>(equalizeSaturationGain));
+    statusMessage = "Equalização de histograma aplicada ao componente I (HSI).";
 }
 
 void AppState::updateHistograms() {
     if (!hasImage || !histogramDirty) return;
-    histogramWorking = core::computeHistogram(workingImage);
-    histogramOriginal = core::computeHistogram(originalImage);
+    histogramWorking = core::computeColorHistograms(workingImage);
+    histogramOriginal = core::computeColorHistograms(originalImage);
     histogramDirty = false;
 }
 
 long long AppState::steganographyCapacityBytes() {
     if (!hasImage) return 0;
-    return core::steganographyCapacityBytes(workingImage);
+    return core::steganographyCapacityBytes(workingImage.r());   // a mensagem fica no LSB do canal R
 }
 
 bool AppState::embedSteganoMessage() {
@@ -320,7 +362,7 @@ bool AppState::embedSteganoMessage() {
         return false;
     }
 
-    bool ok = core::embedMessageLSB(workingImage, message);
+    bool ok = core::embedMessageLSB(workingImage.r(), message);
     statusMessage = ok
         ? "Mensagem escondida nos bits menos significativos da imagem."
         : "A mensagem não cabe nesta imagem (reduza o texto ou use uma imagem maior).";
@@ -329,10 +371,104 @@ bool AppState::embedSteganoMessage() {
 
 void AppState::extractSteganoMessage() {
     if (!hasImage) return;
-    steganoExtractedMessage = core::extractMessageLSB(workingImage);
+    steganoExtractedMessage = core::extractMessageLSB(workingImage.r());
     statusMessage = steganoExtractedMessage.empty()
         ? "Nenhuma mensagem escondida foi encontrada nesta imagem."
         : "Mensagem extraída com sucesso.";
+}
+
+
+// ---------------------------------------------------------------------
+// Imagens coloridas
+// ---------------------------------------------------------------------
+
+void AppState::applyGrayAverage() {
+    if (!hasImage) return;
+    core::toGrayAverage(workingImage);
+    statusMessage = "Escala de cinza aplicada (média aritmética simples: (R+G+B)/3).";
+}
+
+void AppState::applyGrayWeighted() {
+    if (!hasImage) return;
+    core::toGrayWeighted(workingImage, static_cast<double>(grayWeightR), static_cast<double>(grayWeightG),
+                         static_cast<double>(grayWeightB));
+    statusMessage = "Escala de cinza aplicada (média ponderada).";
+}
+
+void AppState::applySepia() {
+    if (!hasImage) return;
+    core::SepiaParams params;
+    params.mode = (sepiaMode == 1) ? core::SepiaMode::HSI : core::SepiaMode::Matrix;
+    params.hue = static_cast<double>(sepiaHue);
+    params.saturation = static_cast<double>(sepiaSaturation);
+    core::sepia(workingImage, params);
+    statusMessage = sepiaMode == 1 ? "Sépia aplicada (via HSI)." : "Sépia aplicada (matriz clássica).";
+}
+
+bool AppState::loadChromaBackground(std::string& path) {
+    std::string pathCopy = path;
+    core::ColorImage loaded;
+    if (!core::loadImage(pathCopy, loaded)) {
+        statusMessage = "Falha ao carregar a imagem de fundo: " + pathCopy;
+        return false;
+    }
+    chromaBackground = loaded;
+    hasChromaBackground = true;
+    chromaBackgroundName = pathCopy;
+    statusMessage = "Imagem de fundo do chroma-key carregada: " + pathCopy;
+    return true;
+}
+
+core::ChromaKeyParams AppState::chromaKeyParams() const {
+    core::ChromaKeyParams p;
+    p.keyR = static_cast<int>(std::lround(chromaKeyColor[0] * 255.0f));
+    p.keyG = static_cast<int>(std::lround(chromaKeyColor[1] * 255.0f));
+    p.keyB = static_cast<int>(std::lround(chromaKeyColor[2] * 255.0f));
+    p.tolerance = static_cast<double>(chromaTolerance) / 100.0;
+    p.feather = static_cast<double>(chromaFeather) / 100.0;
+    p.mode = (chromaMode == 1) ? core::ChromaKeyMode::Cube : core::ChromaKeyMode::Sphere;
+    return p;
+}
+
+void AppState::applyChromaKey() {
+    if (!hasImage) return;
+    if (!hasChromaBackground) {
+        statusMessage = "Escolha a imagem de fundo antes de aplicar o chroma-key.";
+        return;
+    }
+    core::chromaKey(workingImage, chromaBackground, chromaKeyParams());
+    statusMessage = "Chroma-key aplicado (distância = " + std::to_string(static_cast<int>(chromaTolerance)) + "%).";
+}
+
+void AppState::pickChromaColor(int row, int col) {
+    int r = 0, g = 0, b = 0;
+    if (!core::sampleAverageColor(workingImage, row, col, chromaPickRadius, r, g, b)) return;
+    chromaKeyColor[0] = static_cast<float>(r) / 255.0f;
+    chromaKeyColor[1] = static_cast<float>(g) / 255.0f;
+    chromaKeyColor[2] = static_cast<float>(b) / 255.0f;
+    chromaPicking = false;
+    statusMessage = "Cor-chave escolhida: RGB (" + std::to_string(r) + ", " + std::to_string(g) + ", " +
+                    std::to_string(b) + ").";
+}
+
+void AppState::applyHsiAdjust() {
+    if (!hasImage) return;
+    core::adjustHsi(workingImage, static_cast<double>(hsiDeltaHue), static_cast<double>(hsiSaturationFactor),
+                    static_cast<double>(hsiIntensityFactor));
+    statusMessage = "Ajuste de matiz, saturação e brilho (HSI) aplicado.";
+}
+
+void AppState::applyChannelAdjust() {
+    if (!hasImage) return;
+    core::adjustChannels(workingImage, channelDeltaR, channelDeltaG, channelDeltaB);
+    statusMessage = "Ajuste de canal (C/R, M/G, Y/B) aplicado.";
+}
+
+void AppState::applyViewToImage() {
+    if (!hasImage || viewChoice == 0) return;
+    workingImage = core::makeView(workingImage, colorView());
+    viewChoice = 0;
+    statusMessage = "O plano visualizado agora é a imagem de trabalho (escala de cinza).";
 }
 
 }

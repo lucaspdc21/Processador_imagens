@@ -41,9 +41,167 @@ void RenderLeftPanel(AppState& state, float width, float height) {
 
     ImGui::Dummy(ImVec2(0, 6));
 
+    // ---- Imagens coloridas ----
+    if (ImGui::CollapsingHeader("Cor: sistemas RGB / HSI, cinza e sépia")) {
+        ImGui::Indent();
+
+        ImGui::SeparatorText("Sistemas de cores (RGB <-> HSI)");
+        ImGui::TextDisabled("H = matiz (graus), S = saturação, I = (R+G+B)/3");
+        const char* viewNames[] = {"Imagem colorida (RGB)", "Plano R", "Plano G", "Plano B",
+                                   "Plano H (matiz)", "Plano S (saturação)", "Plano I (intensidade)"};
+        ImGui::SetNextItemWidth(-1);
+        if (ImGui::Combo("##viewMode", &state.viewChoice, viewNames, 7)) {
+            RefreshTexture(state);
+        }
+        ImGui::TextDisabled("Só muda a exibição. H e S não têm sentido em cinza (S = 0).");
+        ImGui::BeginDisabled(state.viewChoice == 0);
+        if (ImGui::Button("Usar plano exibido como imagem", ImVec2(-1, 0))) {
+            state.applyViewToImage();
+            RefreshTexture(state);
+        }
+        ImGui::EndDisabled();
+
+        ImGui::SeparatorText("Escala de cinza");
+        if (ImGui::Button("Cinza: média aritmética (R+G+B)/3", ImVec2(-1, 0))) {
+            state.applyGrayAverage();
+            RefreshTexture(state);
+        }
+        ImGui::Dummy(ImVec2(0, 4));
+        ImGui::Text("Média ponderada: Y = wR R + wG G + wB B");
+        ImGui::SetNextItemWidth(-1);
+        ImGui::SliderFloat("##gwr", &state.grayWeightR, 0.0f, 1.0f, "wR = %.3f");
+        ImGui::SetNextItemWidth(-1);
+        ImGui::SliderFloat("##gwg", &state.grayWeightG, 0.0f, 1.0f, "wG = %.3f");
+        ImGui::SetNextItemWidth(-1);
+        ImGui::SliderFloat("##gwb", &state.grayWeightB, 0.0f, 1.0f, "wB = %.3f");
+        ImGui::TextDisabled("Soma dos pesos = %.3f (normalizada ao aplicar)",
+                            state.grayWeightR + state.grayWeightG + state.grayWeightB);
+        if (ImGui::Button("ITU-R BT.601 (0.299 / 0.587 / 0.114)", ImVec2(-1, 0))) {
+            state.grayWeightR = 0.299f;
+            state.grayWeightG = 0.587f;
+            state.grayWeightB = 0.114f;
+        }
+        if (ImGui::Button("Cinza: média ponderada", ImVec2(-1, 0))) {
+            state.applyGrayWeighted();
+            RefreshTexture(state);
+        }
+
+        ImGui::SeparatorText("Sépia (cinza amarelado)");
+        const char* sepiaNames[] = {"Matriz clássica", "Via HSI (matiz e saturação fixos)"};
+        ImGui::SetNextItemWidth(-1);
+        ImGui::Combo("##sepiaMode", &state.sepiaMode, sepiaNames, 2);
+        if (state.sepiaMode == 1) {
+            ImGui::SetNextItemWidth(-1);
+            ImGui::SliderFloat("##sepiaH", &state.sepiaHue, 20.0f, 50.0f, "H = %.0f°");
+            ImGui::SetNextItemWidth(-1);
+            ImGui::SliderFloat("##sepiaS", &state.sepiaSaturation, 0.0f, 0.8f, "S = %.2f");
+        }
+        if (ImGui::Button("Aplicar sépia", ImVec2(-1, 0))) {
+            state.applySepia();
+            RefreshTexture(state);
+        }
+
+        ImGui::Unindent();
+    }
+
+    if (ImGui::CollapsingHeader("Cor: ajustes e chroma-key")) {
+        ImGui::Indent();
+
+        // ---- Matiz, saturacao e brilho
+        ImGui::SeparatorText("Matiz, saturação e brilho (HSI)");
+        ImGui::SetNextItemWidth(-1);
+        ImGui::SliderFloat("##hsiH", &state.hsiDeltaHue, -180.0f, 180.0f, "matiz: %+.0f°");
+        ImGui::SetNextItemWidth(-1);
+        ImGui::SliderFloat("##hsiS", &state.hsiSaturationFactor, 0.0f, 2.0f, "saturação: x %.2f");
+        ImGui::SetNextItemWidth(-1);
+        ImGui::SliderFloat("##hsiI", &state.hsiIntensityFactor, 0.0f, 2.0f, "brilho (I): x %.2f");
+        ImGui::TextDisabled("H' = H + dH | S' = k_s * S | I' = k * I (cada um independente)");
+        if (ImGui::Button("Aplicar ajuste HSI", ImVec2(-1, 0))) {
+            state.applyHsiAdjust();
+            RefreshTexture(state);
+        }
+        if (ImGui::Button("Zerar ajuste HSI", ImVec2(-1, 0))) {
+            state.hsiDeltaHue = 0.0f;
+            state.hsiSaturationFactor = 1.0f;
+            state.hsiIntensityFactor = 1.0f;
+        }
+
+        // ---- Canais complementares
+        ImGui::SeparatorText("Ajuste de canal (C/R, M/G, Y/B)");
+        ImGui::SetNextItemWidth(-1);
+        ImGui::SliderInt("##dR", &state.channelDeltaR, -255, 255, "Ciano <-> Vermelho: %+d");
+        ImGui::SetNextItemWidth(-1);
+        ImGui::SliderInt("##dG", &state.channelDeltaG, -255, 255, "Magenta <-> Verde: %+d");
+        ImGui::SetNextItemWidth(-1);
+        ImGui::SliderInt("##dB", &state.channelDeltaB, -255, 255, "Amarelo <-> Azul: %+d");
+        ImGui::TextDisabled("Cada cor é complementar da outra: mais R = menos C (C = 1 - R).");
+        if (ImGui::Button("Aplicar ajuste de canal", ImVec2(-1, 0))) {
+            state.applyChannelAdjust();
+            RefreshTexture(state);
+        }
+        if (ImGui::Button("Zerar ajuste de canal", ImVec2(-1, 0))) {
+            state.channelDeltaR = state.channelDeltaG = state.channelDeltaB = 0;
+        }
+
+        // ---- Chroma-key
+        ImGui::SeparatorText("Chroma-key");
+        ImGui::TextDisabled("A imagem atual (fundo verde) é a frente.");
+        if (ImGui::Button("Escolher imagem de fundo...", ImVec2(-1, 0))) {
+            const char* filters[] = { "*.png", "*.jpg", "*.jpeg", "*.bmp", "*.tga" };
+            const char* selected = tinyfd_openFileDialog(
+                "Imagem que substituirá o verde", "", 5, filters, "Imagens", 0);
+            if (selected != nullptr) {
+                std::string path(selected);
+                state.loadChromaBackground(path);
+            }
+        }
+        if (state.hasChromaBackground) {
+            ImGui::TextWrapped("Fundo: %s (%d x %d)", state.chromaBackgroundName.c_str(),
+                               state.chromaBackground.getCols(), state.chromaBackground.getRows());
+        } else {
+            ImGui::TextDisabled("Nenhuma imagem de fundo escolhida.");
+        }
+
+        ImGui::Text("Cor-chave a:");
+        ImGui::SetNextItemWidth(-1);
+        ImGui::ColorEdit3("##chromaColor", state.chromaKeyColor, ImGuiColorEditFlags_Uint8);
+        if (ImGui::Button(state.chromaPicking ? "Cancelar conta-gotas" : "Conta-gotas (clicar na imagem)", ImVec2(-1, 0))) {
+            state.chromaPicking = !state.chromaPicking;
+        }
+        ImGui::SetNextItemWidth(-1);
+        ImGui::SliderInt("##pickRadius", &state.chromaPickRadius, 0, 20, "média numa janela de raio %d px");
+        if (ImGui::Button("Verde puro (0, 255, 0)", ImVec2(-1, 0))) {
+            state.chromaKeyColor[0] = 0.0f;
+            state.chromaKeyColor[1] = 1.0f;
+            state.chromaKeyColor[2] = 0.0f;
+        }
+
+        const char* chromaModes[] = {"Esfera: distância euclidiana", "Cubo: |zj - aj| <= D0 em cada canal"};
+        ImGui::SetNextItemWidth(-1);
+        ImGui::Combo("##chromaMode", &state.chromaMode, chromaModes, 2);
+        ImGui::SetNextItemWidth(-1);
+        ImGui::SliderFloat("##chromaTol", &state.chromaTolerance, 0.0f, 100.0f, "distância D0 = %.1f%%");
+        ImGui::TextDisabled("D(z, a) <= D0: pixel vira o fundo. 100%% = distância máxima do RGB.");
+        ImGui::SetNextItemWidth(-1);
+        ImGui::SliderFloat("##chromaFeather", &state.chromaFeather, 0.0f, 30.0f, "borda suave = %.1f%%");
+        if (ImGui::Button("Aplicar chroma-key", ImVec2(-1, 0))) {
+            state.applyChromaKey();
+            RefreshTexture(state);
+        }
+
+        ImGui::Unindent();
+    }
+
     // novas tranf dorpdown
     if (ImGui::CollapsingHeader("Transformações de intensidade", ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::Indent();
+
+        // Em imagens coloridas: em quais componentes aplicar
+        ImGui::SeparatorText("Imagem colorida: aplicar em");
+        const char* targetNames[] = {"R, G e B (cada canal)", "Só no componente I (HSI)"};
+        ImGui::SetNextItemWidth(-1);
+        ImGui::Combo("##colorTarget", &state.colorTargetChoice, targetNames, 2);
+        ImGui::TextDisabled("Vale para as transformações abaixo e para os filtros. O negativo é sempre em RGB.");
 
         // Negativo
         ImGui::SeparatorText("1. Negativo");
@@ -138,7 +296,7 @@ void RenderLeftPanel(AppState& state, float width, float height) {
         ImGui::Text("Esconder mensagem (usa o bit 1 / LSB)");
         ImGui::SetNextItemWidth(-1);
         ImGui::InputText("##steganomsg", state.steganoMessageBuffer, sizeof(state.steganoMessageBuffer));
-        ImGui::TextDisabled("Capacidade da imagem atual: %lld bytes", state.steganographyCapacityBytes());
+        ImGui::TextDisabled("Capacidade da imagem atual: %lld bytes (LSB do canal R)", state.steganographyCapacityBytes());
         if (ImGui::Button("Esconder mensagem na imagem", ImVec2(-1, 0))) {
             if (state.embedSteganoMessage()) {
                 RefreshTexture(state);
@@ -153,7 +311,10 @@ void RenderLeftPanel(AppState& state, float width, float height) {
 
         // Equalizacao de histograma
         ImGui::SeparatorText("7. Equalização de histograma");
-        ImGui::TextDisabled("Automática: s = (L-1) * soma de p(rj). Sem parâmetros.");
+        ImGui::TextDisabled("s = (L-1) * soma de p(rj), aplicada só ao componente I (HSI):");
+        ImGui::TextDisabled("as cores (H e S) são preservadas.");
+        ImGui::SetNextItemWidth(-1);
+        ImGui::SliderFloat("##eqSat", &state.equalizeSaturationGain, 0.5f, 2.0f, "saturação depois: x %.2f");
         if (ImGui::Button("Equalizar histograma", ImVec2(-1, 0))) {
             state.applyHistogramEqualization();
             RefreshTexture(state);
@@ -255,6 +416,8 @@ void RenderLeftPanel(AppState& state, float width, float height) {
             RefreshTexture(state);
         }
         ImGui::Checkbox("Aproximar por |gx| + |gy|", &state.gradientApproximate);
+        ImGui::Checkbox("Cor: gradiente vetorial (Di Zenzo)", &state.gradientDiZenzo);
+        ImGui::TextDisabled("Desmarcado: magnitude em cada canal, somadas.");
         if (ImGui::Button("Magnitude do gradiente", ImVec2(-1, 0))) {
             state.applyGradientMagnitude();
             RefreshTexture(state);

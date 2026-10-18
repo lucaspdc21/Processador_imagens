@@ -18,6 +18,7 @@ namespace core {
         double mean = 0.0;
         double variance = 0.0;
         double stdDev = 0.0;
+        int median = 0;       // menor nivel k com soma de p(rj), j <= k, maior ou igual a 0,5
     };
 
     // Calcula h(rk) = nk

@@ -1,5 +1,6 @@
 #pragma once
 #include "Image.hpp"
+#include "ColorImage.hpp"
 
 namespace core {
 
@@ -19,5 +20,9 @@ namespace core {
     };
 
     StorageMetrics computeStorageMetrics(Image& img);
+
+    // Imagem colorida: k bits por canal, 3 canais
+    SpatialMetrics computeSpatialMetrics(ColorImage& img);
+    StorageMetrics computeStorageMetrics(ColorImage& img);
 
 }

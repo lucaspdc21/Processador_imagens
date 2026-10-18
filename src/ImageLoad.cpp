@@ -37,6 +37,56 @@ namespace core{
 
     }
 
+    bool loadImage(std::string& path, ColorImage& outImage){
+        int width = 0, height = 0, channelsInFile = 0;
+
+        unsigned char* pixels = stbi_load(path.c_str(), &width, &height, &channelsInFile, 3);
+        if (!pixels) {
+            return false;
+        }
+
+        outImage = ColorImage(height, width, 255);
+        auto& dr = outImage.r().getData();
+        auto& dg = outImage.g().getData();
+        auto& db = outImage.b().getData();
+
+        for (int row = 0; row < height; ++row) {
+            for (int col = 0; col < width; ++col) {
+                size_t idx = (static_cast<size_t>(row) * width + col) * 3;
+                dr[row][col] = pixels[idx + 0];
+                dg[row][col] = pixels[idx + 1];
+                db[row][col] = pixels[idx + 2];
+            }
+        }
+
+        stbi_image_free(pixels);
+        return true;
+    }
+
+    bool saveImagePNG(std::string& path, ColorImage& image){
+        int height = image.getRows();
+        int width = image.getCols();
+        if (height <= 0 || width <= 0) {
+            return false;
+        }
+
+        std::vector<unsigned char> pixels(static_cast<size_t>(height) * width * 3);
+        for (int c = 0; c < ColorImage::kChannels; ++c) {
+            auto& data = image.channel(c).getData();
+            for (int row = 0; row < height; ++row) {
+                for (int col = 0; col < width; ++col) {
+                    int v = data[row][col];
+                    if (v < 0) v = 0;
+                    if (v > 255) v = 255;
+                    pixels[(static_cast<size_t>(row) * width + col) * 3 + c] = static_cast<unsigned char>(v);
+                }
+            }
+        }
+
+        int result = stbi_write_png(path.c_str(), width, height, 3, pixels.data(), width * 3);
+        return result != 0;
+    }
+
     bool saveImagePNG(std::string& path, Image& image){
         int height = image.getRows();
         int width = image.getCols();

@@ -27,4 +27,17 @@ StorageMetrics computeStorageMetrics(Image& img) {
     return m;
 }
 
+SpatialMetrics computeSpatialMetrics(ColorImage& img) {
+    return computeSpatialMetrics(img.r());
+}
+
+StorageMetrics computeStorageMetrics(ColorImage& img) {
+    StorageMetrics m = computeStorageMetrics(img.r());
+    m.bits *= ColorImage::kChannels;
+    m.bytes = static_cast<double>(m.bits) / 8.0;
+    m.kilobytes = m.bytes / 1024.0;
+    m.megabytes = m.kilobytes / 1024.0;
+    return m;
+}
+
 }

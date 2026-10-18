@@ -1,6 +1,10 @@
 #include "CompareWindow.hpp"
 #include "ImageTexture.hpp"
 #include "ImageIntensity.hpp"
+#include "ImageHistogram.hpp"
+#include "ImageStats.hpp"
+#include "ImageColor.hpp"
+#include <cmath>
 #include "imgui.h"
 #include <cstdint>
 #include <cstdio>
@@ -16,50 +20,98 @@ void BuildCompareTextures(AppState& state) {
     // Ponto de partida comum para todas as transformacoes: a imagem que esta
     // sendo exibida no painel central agora (ja com quantizacao/reamostragem
     // aplicadas, se o usuario tiver usado essas opcoes antes de comparar).
-    core::Image& base = state.workingImage;
+    core::ColorImage& base = state.workingImage;
+    const core::ColorTarget target = state.colorTarget();
 
-    std::vector<std::pair<std::string, core::Image>> results;
-    results.reserve(10);
+    std::vector<std::pair<std::string, core::ColorImage>> results;
+    results.reserve(16);
 
     results.emplace_back("Imagem atual", base);
 
-    core::Image negativa = base;
-    core::negative(negativa);
-    results.emplace_back("1. Negativo", negativa);
+    // Aplica 'op' numa copia da imagem atual e guarda o resultado
+    auto add = [&](const std::string& label, core::ColorTarget t, const core::PlaneOp& op) {
+        core::ColorImage copy = base;
+        core::applyToPlanes(copy, t, op);
+        results.emplace_back(label, copy);
+    };
 
-    core::Image brilho = base;
-    core::brightness(brilho, static_cast<double>(state.brightnessFactor));
+    add("1. Negativo", core::ColorTarget::ChannelsRGB, [](core::Image& p) { core::negative(p); });
+
     char kBuf[32];
     std::snprintf(kBuf, sizeof(kBuf), "%.2f", state.brightnessFactor);
-    results.emplace_back(std::string("1b. Brilho (k = ") + kBuf + ")", brilho);
+    add(std::string("1b. Brilho (k = ") + kBuf + ")", target,
+        [&](core::Image& p) { core::brightness(p, static_cast<double>(state.brightnessFactor)); });
 
-    core::Image limiarizada = base;
-    core::threshold(limiarizada, state.thresholdValue);
-    results.emplace_back("2. Limiarização (m = " + std::to_string(state.thresholdValue) + ")", limiarizada);
+    add("2. Limiarização (m = " + std::to_string(state.thresholdValue) + ")", target,
+        [&](core::Image& p) { core::threshold(p, state.thresholdValue); });
 
-    core::Image logaritmica = base;
-    core::logTransform(logaritmica, static_cast<double>(state.logConstant), state.logAutoConstant);
-    results.emplace_back("3. Transformação logarítmica", logaritmica);
+    {
+        double c = static_cast<double>(state.logConstant);
+        if (state.logAutoConstant) {
+            int maxVal = core::computeStats(base).maxValue;
+            c = (maxVal <= 0) ? 1.0 : 255.0 / std::log(1.0 + static_cast<double>(maxVal));
+        }
+        add("3. Transformação logarítmica", target, [&](core::Image& p) { core::logTransform(p, c, false); });
+    }
 
-    core::Image potencia = base;
-    core::gammaCorrection(potencia, static_cast<double>(state.gammaValue), static_cast<double>(state.gammaConstant));
-    results.emplace_back("4. Correção de gama (γ = " + std::to_string(state.gammaValue) + ")", potencia);
+    add("4. Correção de gama (γ = " + std::to_string(state.gammaValue) + ")", target, [&](core::Image& p) {
+        core::gammaCorrection(p, static_cast<double>(state.gammaValue), static_cast<double>(state.gammaConstant));
+    });
 
-    core::Image alargada = base;
-    core::contrastStretch(alargada, state.stretchR1, state.stretchS1, state.stretchR2, state.stretchS2);
-    results.emplace_back("5a. Alargamento de contraste", alargada);
+    add("5a. Alargamento de contraste", target, [&](core::Image& p) {
+        core::contrastStretch(p, state.stretchR1, state.stretchS1, state.stretchR2, state.stretchS2);
+    });
 
-    core::Image fatiada = base;
-    core::intensitySlice(fatiada, state.sliceMin, state.sliceMax, state.sliceHighlight, state.slicePreserveBackground);
-    results.emplace_back("5b. Fatiamento de níveis", fatiada);
+    add("5b. Fatiamento de níveis", target, [&](core::Image& p) {
+        core::intensitySlice(p, state.sliceMin, state.sliceMax, state.sliceHighlight, state.slicePreserveBackground);
+    });
 
-    core::Image plano = base;
-    core::bitPlaneSlice(plano, state.bitPlaneSelected);
-    results.emplace_back("6. Plano de bits " + std::to_string(state.bitPlaneSelected), plano);
+    add("6. Plano de bits " + std::to_string(state.bitPlaneSelected), target,
+        [&](core::Image& p) { core::bitPlaneSlice(p, state.bitPlaneSelected); });
 
-    core::Image equalizada = base;
-    core::equalizeHistogram(equalizada);
-    results.emplace_back("7. Equalização de histograma", equalizada);
+    {
+        core::ColorImage equalizada = base;
+        core::equalizeHistogramHSI(equalizada, static_cast<double>(state.equalizeSaturationGain));
+        results.emplace_back("7. Equalização de histograma (HSI)", equalizada);
+    }
+
+    // ---- Cor ----
+    {
+        core::ColorImage cinza = base;
+        core::toGrayAverage(cinza);
+        results.emplace_back("8a. Cinza: média simples", cinza);
+    }
+    {
+        core::ColorImage cinza = base;
+        core::toGrayWeighted(cinza, static_cast<double>(state.grayWeightR), static_cast<double>(state.grayWeightG),
+                             static_cast<double>(state.grayWeightB));
+        results.emplace_back("8b. Cinza: média ponderada", cinza);
+    }
+    {
+        core::ColorImage sepia = base;
+        core::SepiaParams params;
+        params.mode = (state.sepiaMode == 1) ? core::SepiaMode::HSI : core::SepiaMode::Matrix;
+        params.hue = static_cast<double>(state.sepiaHue);
+        params.saturation = static_cast<double>(state.sepiaSaturation);
+        core::sepia(sepia, params);
+        results.emplace_back("9. Sépia", sepia);
+    }
+    {
+        core::ColorImage ajustada = base;
+        core::adjustHsi(ajustada, static_cast<double>(state.hsiDeltaHue), static_cast<double>(state.hsiSaturationFactor),
+                        static_cast<double>(state.hsiIntensityFactor));
+        results.emplace_back("10. Matiz / saturação / brilho (HSI)", ajustada);
+    }
+    {
+        core::ColorImage ajustada = base;
+        core::adjustChannels(ajustada, state.channelDeltaR, state.channelDeltaG, state.channelDeltaB);
+        results.emplace_back("11. Ajuste de canal C/R, M/G, Y/B", ajustada);
+    }
+    if (state.hasChromaBackground) {
+        core::ColorImage chave = base;
+        core::chromaKey(chave, state.chromaBackground, state.chromaKeyParams());
+        results.emplace_back("12. Chroma-key", chave);
+    }
 
     // Garante um slot de textura por resultado, reaproveitando os que ja existem
     // (evita bug)
@@ -88,9 +140,9 @@ void RenderCompareWindow(AppState& state) {
 
     ImGui::SetNextWindowSize(ImVec2(1100, 750), ImGuiCond_FirstUseEver);
     bool open = state.showCompareWindow;
-    if (ImGui::Begin("Comparação de transformações de intensidade", &open)) {
+    if (ImGui::Begin("Comparação de transformações", &open)) {
         ImGui::TextWrapped(
-            "Cada seção mostra o resultado de uma transformação de intensidade "
+            "Cada seção mostra o resultado de uma transformação "
             "aplicada a partir da imagem atual do painel central. Ajuste os "
             "parâmetros no painel esquerdo e clique em \"Atualizar comparação\" "
             "para recalcular.");
@@ -106,7 +158,8 @@ void RenderCompareWindow(AppState& state) {
 
         if (ImGui::BeginTable("TabelaComparacao", columns,
                                ImGuiTableFlags_Borders | ImGuiTableFlags_SizingStretchSame)) {
-            for (size_t i = 0; i < state.compareTextureIds.size(); ++i) {
+            // os rotulos acompanham os resultados atuais (pode haver menos que slots de textura)
+            for (size_t i = 0; i < state.compareLabels.size(); ++i) {
                 if (i % columns == 0) ImGui::TableNextRow();
                 ImGui::TableNextColumn();
 

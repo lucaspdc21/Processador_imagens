@@ -1,5 +1,6 @@
 #pragma once
 #include "Image.hpp"
+#include "ColorImage.hpp"
 
 namespace core {
 
@@ -11,5 +12,8 @@ namespace core {
     };
 
     ImageStats computeStats(Image& img);
+
+    // Minimo e maximo considerando os tres planos
+    ImageStats computeStats(ColorImage& img);
 
 }
