@@ -16,6 +16,10 @@ namespace ui {
         core::ColorImage workingImage;
         bool hasImage = false;
 
+        // Incrementado a cada RefreshTexture (imagem de trabalho mudou). As
+        // janelas auxiliares usam para saber quando descartar previas antigas.
+        int imageRevision = 0;
+
         unsigned int textureId = 0; // id de textura OpenGL 
 
         int bitsPerPixel = 8;       // k selecionado na interface
@@ -56,6 +60,12 @@ namespace ui {
         core::ColorHistograms histogramOriginal;
         bool histogramDirty = true;
         bool histogramNormalized = false;   // false: h(rk) = nk | true: p(rk) = nk/MN
+
+        // Janela de escala e rotacao (operacoes espaciais)
+        bool showSpatialWindow = false;
+
+        // Janela de filtragem no dominio da frequencia (DFT/FFT, espectro editavel)
+        bool showFrequencyWindow = false;
 
         // Filtro por convolucao (kernel generico quadrado de tamanho impar)
         bool showConvolutionWindow = false;

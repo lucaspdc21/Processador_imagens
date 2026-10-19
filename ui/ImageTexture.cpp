@@ -65,6 +65,7 @@ void RefreshTexture(AppState& state) {
     }
     state.normalizeNextDisplay = false;
     state.histogramDirty = true;
+    ++state.imageRevision;
 }
 
 }

@@ -18,6 +18,8 @@
 #include "RightPanel.hpp"
 #include "CompareWindow.hpp"
 #include "ConvolutionWindow.hpp"
+#include "SpatialWindow.hpp"
+#include "FrequencyWindow.hpp"
 
 void error_callback(int error, const char* description) {
     std::cerr << "Erro GLFW [" << error << "]: " << description << std::endl;
@@ -109,6 +111,14 @@ int main() {
 
         if (state.showConvolutionWindow) {
             ui::RenderConvolutionWindow(state);
+        }
+
+        if (state.showSpatialWindow) {
+            ui::RenderSpatialWindow(state);
+        }
+
+        if (state.showFrequencyWindow) {
+            ui::RenderFrequencyWindow(state);
         }
 
         ImGui::Render();

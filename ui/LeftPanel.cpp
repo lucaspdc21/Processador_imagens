@@ -323,6 +323,28 @@ void RenderLeftPanel(AppState& state, float width, float height) {
         ImGui::Unindent();
     }
 
+    if (ImGui::CollapsingHeader("Operações espaciais (escala e rotação)", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::Indent();
+
+        ImGui::TextDisabled("Escala e rotação com pivô, interpolação por vizinho mais próximo ou bilinear.");
+        if (ImGui::Button("Abrir escala e rotação", ImVec2(-1, 0))) {
+            state.showSpatialWindow = true;
+        }
+
+        ImGui::Unindent();
+    }
+
+    if (ImGui::CollapsingHeader("Filtragem no domínio da frequência", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::Indent();
+
+        ImGui::TextDisabled("DFT / FFT, espectro centralizado editável (pincel) e transformada inversa.");
+        if (ImGui::Button("Abrir filtragem em frequência", ImVec2(-1, 0))) {
+            state.showFrequencyWindow = true;
+        }
+
+        ImGui::Unindent();
+    }
+
     if (ImGui::CollapsingHeader("Filtragem espacial", ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::Indent();
 
