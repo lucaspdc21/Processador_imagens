@@ -5,8 +5,6 @@
 namespace core {
 
 namespace {
-    constexpr double kPi = 3.14159265358979323846;
-
     inline double signXY(int x, int y) { return ((x + y) & 1) ? -1.0 : 1.0; }   // (-1)^(x+y)
 
     inline uint8_t toByte(double v) {
@@ -16,26 +14,15 @@ namespace {
     }
 }
 
-PaddedSize computePaddedSize(int M, int N, TransformAlgorithm algo, bool usePadding) {
-    PaddedSize s;
+TransformSize computeTransformSize(int M, int N) {
+    TransformSize s;
     if (M <= 0 || N <= 0) return s;
-    if (algo == TransformAlgorithm::RadixFFT) {
-        // potencia de 2 (>= 2 para ser par)
-        const int pm = usePadding ? 2 * M - 1 : M;
-        const int pn = usePadding ? 2 * N - 1 : N;
-        s.P = nextPowerOfTwo(std::max(2, pm));
-        s.Q = nextPowerOfTwo(std::max(2, pn));
-    } else if (usePadding) {
-        s.P = 2 * M;
-        s.Q = 2 * N;
-    } else {
-        s.P = M + (M & 1);
-        s.Q = N + (N & 1);
-    }
+    s.P = nextPowerOfTwo(std::max(2, M));
+    s.Q = nextPowerOfTwo(std::max(2, N));
     return s;
 }
 
-bool FrequencySession::compute(Image& img, TransformAlgorithm algo, bool usePadding, TransformControl* control) {
+bool FrequencySession::compute(Image& img, TransformControl* control) {
     hasF_ = false;
     hasResult_ = false;
     error_.clear();
@@ -46,14 +33,10 @@ bool FrequencySession::compute(Image& img, TransformAlgorithm algo, bool usePadd
         error_ = "Imagem vazia.";
         return false;
     }
-    if (algo == TransformAlgorithm::LibraryFFT && !libraryFFTAvailable()) {
-        error_ = "A FFT da biblioteca não foi compilada neste programa (pocketfft ausente).";
-        return false;
-    }
-    const PaddedSize ps = computePaddedSize(M, N, algo, usePadding);
-    if (static_cast<long long>(ps.P) * ps.Q > kMaxPaddedPixels) {
-        error_ = "Imagem grande demais para a transformada (limite: 4096 x 4096 após o preenchimento). "
-                 "Reduza a imagem (escala) ou desmarque o preenchimento.";
+    const TransformSize ps = computeTransformSize(M, N);
+    if (static_cast<long long>(ps.P) * ps.Q > kMaxTransformPixels) {
+        error_ = "Imagem grande demais para a transformada (limite: 4096 x 4096 na FFT radix-2). "
+                 "Reduza a imagem (escala).";
         return false;
     }
 
@@ -61,10 +44,11 @@ bool FrequencySession::compute(Image& img, TransformAlgorithm algo, bool usePadd
     maxIntensity_ = img.getMaxIntensity();
     bits_ = img.getBitsPerPixel();
     dpi_ = img.getDpi();
-    algo_ = algo;
 
-    // Passos 1-2: f_p (P x Q, zeros) com a imagem no canto superior esquerdo,
-    // multiplicada por (-1)^(x+y) (centraliza a transformada: Eq. 4.6-8).
+    // Passos 1-2: a imagem e copiada direto para a matriz de entrada da FFT
+    // (canto superior esquerdo), ja multiplicada por (-1)^(x+y) (centraliza a
+    // transformada: Eq. 4.6-8). Sobram zeros nas bordas apenas quando M ou N
+    // nao sao potencias de 2 (exigencia da radix-2); se forem, P = M e Q = N.
     F_ = ComplexMatrix(P_, Q_);
     const auto& data = img.getData();
     for (int x = 0; x < M; ++x) {
@@ -74,11 +58,11 @@ bool FrequencySession::compute(Image& img, TransformAlgorithm algo, bool usePadd
         }
     }
 
-    // Passo 3: DFT 2-D (uma unica vez; fica em cache).
-    if (!forwardTransform2D(F_, algo, control)) {
+    // Passo 3: FFT 2-D radix-2 (uma unica vez; fica em cache).
+    if (!forwardTransform2D(F_, control)) {
         F_ = ComplexMatrix();
         error_ = (control && control->cancel.load()) ? "Operação cancelada."
-                                                      : "O algoritmo escolhido não consegue tratar este tamanho.";
+                                                      : "A FFT radix-2 não consegue tratar este tamanho.";
         return false;
     }
 
@@ -100,19 +84,11 @@ bool FrequencySession::compute(Image& img, TransformAlgorithm algo, bool usePadd
     return true;
 }
 
-bool FrequencySession::filter(TransformAlgorithm algo, TransformControl* control) {
+bool FrequencySession::filter(TransformControl* control) {
     hasResult_ = false;
     error_.clear();
     if (!hasF_) {
         error_ = "Calcule a DFT antes de aplicar.";
-        return false;
-    }
-    if (algo == TransformAlgorithm::LibraryFFT && !libraryFFTAvailable()) {
-        error_ = "A FFT da biblioteca não foi compilada neste programa.";
-        return false;
-    }
-    if (algo == TransformAlgorithm::RadixFFT && (!isPowerOfTwo(P_) || !isPowerOfTwo(Q_))) {
-        error_ = "A FFT radix-2 exige P e Q potências de 2: recalcule a DFT com esse algoritmo.";
         return false;
     }
 
@@ -125,14 +101,16 @@ bool FrequencySession::filter(TransformAlgorithm algo, TransformControl* control
         for (int c = 0; c < Q_; ++c) row[c] *= static_cast<double>(h[c]);
     });
 
-    // Passo 6: IDFT (um unico algoritmo direto, Secao 4.11.2).
-    if (!inverseTransform2D(G, algo, control)) {
+    // Passo 6: IFFT (a mesma FFT direta, Secao 4.11.2).
+    if (!inverseTransform2D(G, control)) {
         error_ = (control && control->cancel.load()) ? "Operação cancelada."
                                                       : "Falha ao calcular a transformada inversa.";
         return false;
     }
 
-    // Parte real x (-1)^(x+y), recorte [0:M, 0:N] (passos 6-7). Mede o
+    // Parte real x (-1)^(x+y) (passos 6-7). A IFFT devolve P x Q, com a
+    // imagem nas primeiras M linhas e N colunas: le-se essa regiao diretamente
+    // (nao ha recorte a partir de uma matriz expandida 2M x 2N). Mede o
     // residuo imaginario na matriz inteira.
     double maxRe = 0.0, maxIm = 0.0;
     for (const Complex& v : G.data) {
@@ -166,12 +144,6 @@ void FrequencySession::renderPixelRow(int r, int c0, int c1) {
                 break;
             case DisplayMode::OriginalSpectrum:
                 v = 255.0 * std::log1p(std::abs(f[c])) / logMax_;
-                break;
-            case DisplayMode::MaskView:
-                v = 255.0 * static_cast<double>(h[c]);
-                break;
-            case DisplayMode::Phase:
-                v = (std::atan2(f[c].imag(), f[c].real()) + kPi) / (2.0 * kPi) * 255.0;
                 break;
         }
         const uint8_t b = toByte(v);

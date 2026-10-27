@@ -1,31 +1,14 @@
 #include "FrequencyTransform.hpp"
 #include <algorithm>
-#include <chrono>
 #include <cmath>
 #include <functional>
 #include <thread>
-
-#ifdef HAVE_POCKETFFT
-// Biblioteca de FFT (pocketfft, header-only). Usada SOMENTE no modo
-// "FFT da biblioteca" e nos testes; as DFT/FFT proprias nao a utilizam.
-#include "pocketfft_hdronly.hpp"
-#endif
 
 namespace core {
 
 namespace {
 
     constexpr double kTwoPi = 6.283185307179586476925286766559;
-
-    // Tabela tw[k] = e^{-j 2 pi k / n}, k = 0..n-1 (W_n^k do texto).
-    std::vector<Complex> makeTwiddles(int n) {
-        std::vector<Complex> tw(static_cast<size_t>(n));
-        for (int k = 0; k < n; ++k) {
-            const double ang = -kTwoPi * static_cast<double>(k) / static_cast<double>(n);
-            tw[static_cast<size_t>(k)] = Complex(std::cos(ang), std::sin(ang));
-        }
-        return tw;
-    }
 
     // Executa fn(i) para i = 0..n-1 em varios threads (agendamento dinamico).
     template <class Fn>
@@ -45,31 +28,6 @@ namespace {
         for (int t = 1; t < nt; ++t) pool.emplace_back(worker);
         worker();
         for (auto& th : pool) th.join();
-    }
-
-    // ---------------------------------------------------------------------
-    // DFT 1-D "ingenua" (Eq. 4.4-6):  F(u) = sum_x f(x) W_M^{ux}.
-    // O indice (u*x) mod M e obtido por soma incremental (idx += u; se
-    // idx >= M, idx -= M): exato em inteiros, sem multiplicar nem usar '%'
-    // dentro do laco interno, e a tabela de M entradas fica no cache.
-    // Custo: O(M^2) por vetor.
-    // ---------------------------------------------------------------------
-    void naiveDft1d(const Complex* in, Complex* out, int n, const std::vector<Complex>& tw) {
-        const double* a = reinterpret_cast<const double*>(in);
-        const double* w = reinterpret_cast<const double*>(tw.data());
-        for (int u = 0; u < n; ++u) {
-            double sr = 0.0, si = 0.0;
-            int idx = 0;
-            for (int x = 0; x < n; ++x) {
-                const double ar = a[2 * x], ai = a[2 * x + 1];
-                const double wr = w[2 * idx], wi = w[2 * idx + 1];
-                sr += ar * wr - ai * wi;
-                si += ar * wi + ai * wr;
-                idx += u;
-                if (idx >= n) idx -= n;     // u < n: uma subtracao basta
-            }
-            out[u] = Complex(sr, si);
-        }
     }
 
     // ---------------------------------------------------------------------
@@ -169,63 +127,25 @@ namespace {
         return !cancelled.load();
     }
 
-    // Separabilidade (Secao 4.11.1): DFT 1-D em todas as linhas e depois em
+    // Separabilidade (Secao 4.11.1): FFT 1-D em todas as linhas e depois em
     // todas as colunas do resultado. As colunas sao tratadas transpondo a
     // matriz (acesso sequencial) e transpondo de volta.
-    bool transform2DSeparable(ComplexMatrix& m, const std::function<void(Complex*, int)>& rowFnCols,
-                              const std::function<void(Complex*, int)>& rowFnRows,
-                              TransformControl* control) {
-        // 1) linhas (comprimento = cols)
-        if (!transformRows(m, rowFnCols, control, 0.00f, 0.45f)) return false;
-        // 2) colunas: transpoe, transforma as linhas (comprimento = rows), transpoe de volta
-        ComplexMatrix t;
-        transposeBlocked(m, t);
-        if (!transformRows(t, rowFnRows, control, 0.45f, 0.45f)) return false;
-        transposeBlocked(t, m);
-        if (control) control->progress.store(1.0f, std::memory_order_relaxed);
-        return true;
-    }
-
-    bool forwardNaive(ComplexMatrix& m, TransformControl* control) {
-        const std::vector<Complex> twC = makeTwiddles(m.cols);
-        const std::vector<Complex> twR = makeTwiddles(m.rows);
-        auto makeFn = [](const std::vector<Complex>& tw) {
-            return [&tw](Complex* row, int n) {
-                thread_local std::vector<Complex> scratch;
-                scratch.resize(static_cast<size_t>(n));
-                naiveDft1d(row, scratch.data(), n, tw);
-                std::copy(scratch.begin(), scratch.end(), row);
-            };
-        };
-        return transform2DSeparable(m, makeFn(twC), makeFn(twR), control);
-    }
-
     bool forwardRadix(ComplexMatrix& m, TransformControl* control) {
         if (!isPowerOfTwo(m.rows) || !isPowerOfTwo(m.cols)) return false;
         const FftPlan planC(m.cols);
         const FftPlan planR(m.rows);
-        auto makeFn = [](const FftPlan& plan) {
+        const auto rowFn = [](const FftPlan& plan) {
             return [&plan](Complex* row, int) { fftRadix2InPlace(row, plan); };
         };
-        return transform2DSeparable(m, makeFn(planC), makeFn(planR), control);
-    }
-
-    bool forwardLibrary(ComplexMatrix& m, TransformControl* control) {
-#ifdef HAVE_POCKETFFT
-        if (control) control->progress.store(0.1f, std::memory_order_relaxed);
-        const pocketfft::shape_t shape{static_cast<size_t>(m.rows), static_cast<size_t>(m.cols)};
-        const std::ptrdiff_t cs = static_cast<std::ptrdiff_t>(sizeof(Complex));
-        const pocketfft::stride_t stride{static_cast<std::ptrdiff_t>(m.cols) * cs, cs};
-        const pocketfft::shape_t axes{0, 1};
-        pocketfft::c2c<double>(shape, stride, stride, axes, pocketfft::FORWARD,
-                               m.data.data(), m.data.data(), 1.0);
+        // 1) linhas (comprimento = cols)
+        if (!transformRows(m, rowFn(planC), control, 0.00f, 0.45f)) return false;
+        // 2) colunas: transpoe, transforma as linhas (comprimento = rows), transpoe de volta
+        ComplexMatrix t;
+        transposeBlocked(m, t);
+        if (!transformRows(t, rowFn(planR), control, 0.45f, 0.45f)) return false;
+        transposeBlocked(t, m);
         if (control) control->progress.store(1.0f, std::memory_order_relaxed);
         return true;
-#else
-        (void)m;
-        (void)control;
-        return false;
-#endif
     }
 
 }
@@ -233,23 +153,6 @@ namespace {
 // ---------------------------------------------------------------------------
 // API publica
 // ---------------------------------------------------------------------------
-
-const char* algorithmName(TransformAlgorithm algo) {
-    switch (algo) {
-        case TransformAlgorithm::NaiveDFT:   return "DFT própria (ingênua separável)";
-        case TransformAlgorithm::RadixFFT:   return "FFT própria (radix-2)";
-        case TransformAlgorithm::LibraryFFT: return "FFT da biblioteca (pocketfft)";
-    }
-    return "?";
-}
-
-bool libraryFFTAvailable() {
-#ifdef HAVE_POCKETFFT
-    return true;
-#else
-    return false;
-#endif
-}
 
 bool isPowerOfTwo(int n) {
     return n > 0 && (n & (n - 1)) == 0;
@@ -265,25 +168,6 @@ void parallelForEach(int n, const std::function<void(int)>& fn) {
     parallelFor(n, fn);
 }
 
-std::vector<Complex> dft1d(const std::vector<Complex>& f) {
-    const int n = static_cast<int>(f.size());
-    std::vector<Complex> out(f.size());
-    if (n == 0) return out;
-    const std::vector<Complex> tw = makeTwiddles(n);
-    naiveDft1d(f.data(), out.data(), n, tw);
-    return out;
-}
-
-std::vector<Complex> idft1d(const std::vector<Complex>& F) {
-    // Eq. 4.4-7 via Secao 4.11.2: f = conj( DFT{ conj(F) } ) / M
-    const int n = static_cast<int>(F.size());
-    std::vector<Complex> c(F.size());
-    for (size_t i = 0; i < F.size(); ++i) c[i] = std::conj(F[i]);
-    std::vector<Complex> t = dft1d(c);
-    for (auto& v : t) v = std::conj(v) / static_cast<double>(std::max(n, 1));
-    return t;
-}
-
 std::vector<Complex> fft1d(const std::vector<Complex>& f) {
     const int n = static_cast<int>(f.size());
     if (!isPowerOfTwo(n)) return {};
@@ -293,51 +177,23 @@ std::vector<Complex> fft1d(const std::vector<Complex>& f) {
     return out;
 }
 
-bool forwardTransform2D(ComplexMatrix& m, TransformAlgorithm algo, TransformControl* control) {
+bool forwardTransform2D(ComplexMatrix& m, TransformControl* control) {
     if (m.rows <= 0 || m.cols <= 0 ||
         m.data.size() != static_cast<size_t>(m.rows) * static_cast<size_t>(m.cols)) return false;
     if (control) control->progress.store(0.0f, std::memory_order_relaxed);
-    switch (algo) {
-        case TransformAlgorithm::NaiveDFT:   return forwardNaive(m, control);
-        case TransformAlgorithm::RadixFFT:   return forwardRadix(m, control);
-        case TransformAlgorithm::LibraryFFT: return forwardLibrary(m, control);
-    }
-    return false;
+    return forwardRadix(m, control);
 }
 
-bool inverseTransform2D(ComplexMatrix& m, TransformAlgorithm algo, TransformControl* control) {
-    // Secao 4.11.2:  f = conj( DFT{ conj(F) } ) / (M N)
+bool inverseTransform2D(ComplexMatrix& m, TransformControl* control) {
+    // Secao 4.11.2:  f = conj( FFT{ conj(F) } ) / (M N)
     for (auto& v : m.data) v = std::conj(v);
-    if (!forwardTransform2D(m, algo, control)) return false;
+    if (!forwardTransform2D(m, control)) return false;
     const double inv = 1.0 / (static_cast<double>(m.rows) * static_cast<double>(m.cols));
     parallelFor(m.rows, [&](int r) {
         Complex* row = &m.data[static_cast<size_t>(r) * m.cols];
         for (int c = 0; c < m.cols; ++c) row[c] = std::conj(row[c]) * inv;
     });
     return true;
-}
-
-double estimateNaiveSeconds(int P, int Q) {
-    // Calibracao unica: taxa de multiplicacoes-acumulacoes complexas por
-    // segundo de um unico thread, medida numa DFT 1-D pequena.
-    static double macPerSecond = 0.0;
-    if (macPerSecond <= 0.0) {
-        const int n = 256, reps = 24;
-        std::vector<Complex> in(static_cast<size_t>(n), Complex(1.0, 0.5));
-        std::vector<Complex> out(static_cast<size_t>(n));
-        const std::vector<Complex> tw = makeTwiddles(n);
-        const auto t0 = std::chrono::steady_clock::now();
-        for (int i = 0; i < reps; ++i) {
-            naiveDft1d(in.data(), out.data(), n, tw);
-            in[0] = out[1];   // evita que o compilador elimine o laco
-        }
-        const auto t1 = std::chrono::steady_clock::now();
-        const double sec = std::max(1e-6, std::chrono::duration<double>(t1 - t0).count());
-        macPerSecond = static_cast<double>(reps) * n * n / sec;
-    }
-    const double threads = std::max(1u, std::thread::hardware_concurrency());
-    const double macs = static_cast<double>(P) * Q * (static_cast<double>(P) + Q);
-    return macs / (macPerSecond * threads * 0.8);
 }
 
 }

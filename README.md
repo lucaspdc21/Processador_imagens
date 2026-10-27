@@ -43,10 +43,10 @@ Processador/
 │   ├── ImageWarp.hpp        # matriz afim, interpolação (vizinho/bilinear) e warp inverso
 │   ├── ImageScale.hpp       # escala (sx, sy independentes) + suavização antes de reduzir
 │   ├── ImageRotate.hpp      # rotação com pivô (manter tamanho / expandir)
-│   ├── FrequencyTransform.hpp # DFT ingênua, FFT radix-2 própria, FFT da biblioteca, inversa
+│   ├── FrequencyTransform.hpp # FFT radix-2 própria (direta e inversa 2-D)
 │   ├── FrequencyFilters.hpp # filtros pré-definidos H(u,v): LP/HP/BR/BP/notch (ideal, Butterworth, gaussiano)
 │   ├── FrequencyMask.hpp    # máscara H editável: pincel suave, simetria conjugada, desfazer/refazer
-│   └── FrequencySession.hpp # roteiro completo: padding, centralização, F em cache, espectro, IDFT
+│   └── FrequencySession.hpp # roteiro completo: cópia direta, centralização, F em cache, espectro, IFFT
 ├── src/                     # implementações do núcleo (um .cpp por header)
 ├── tests/                   # testes automatizados
 │   ├── color_tests.cpp      # testes do núcleo de cor (alvo color_tests)
@@ -146,38 +146,34 @@ quando você clica em **Aplicar resultado à imagem de trabalho**.
 Painel esquerdo → **Filtragem no domínio da frequência** → *Abrir filtragem em frequência*. A janela mostra
 **entrada | espectro (editável) | imagem filtrada**. Fluxo (Seção 4.7.3 do plano):
 
-1. Escolha o **algoritmo** e se usa **preenchimento**, e clique em **Calcular DFT**. A imagem é preenchida com zeros
-   até `P x Q` (canto superior esquerdo), multiplicada por `(-1)^(x+y)` (centraliza a transformada) e transformada
-   **uma única vez**; `F(u,v)` fica em cache (`complex128`).
-2. O **espectro centralizado** é exibido como `log(1 + |F|)` normalizado por `S_max` (também há *original*,
-   *máscara H* e *fase*).
+1. Clique em **Calcular FFT**. A imagem é copiada direto para a matriz `P x Q` da FFT (sem preenchimento com zeros
+   de `2M x 2N`), multiplicada por `(-1)^(x+y)` (centraliza a transformada) e transformada **uma única vez**;
+   `F(u,v)` fica em cache (`complex128`).
+2. O **espectro centralizado** é exibido como `log(1 + |F|)` normalizado por `S_max` (também há o *original*).
 3. **Edite** o espectro com o pincel (preto remove, branco restaura, cinza atenua; raio, dureza, opacidade, disco
-   duro ou pincel suave gaussiano) ou com a ferramenta **notch por clique**, e/ou aplique **filtros pré-definidos**
-   (passa/rejeita baixa, alta, faixa e notch; ideal, Butterworth, gaussiano). Tudo escreve na mesma máscara real
-   `H(u,v)` em `[0,1]` (multiplicativa, preserva a fase), com **desfazer/refazer**, *resetar* e *inverter*.
-4. **Aplicar (IDFT)** calcula `G = H·F`, a inversa, a parte real, `(-1)^(x+y)` e o recorte `[0:M, 0:N]`. A saída pode
-   ser *normalizada min-max* (padrão) ou *recortada em [0,255]*; *Usar resultado como imagem de trabalho* o aplica.
+   duro ou pincel suave gaussiano). Tudo escreve na máscara real `H(u,v)` em `[0,1]` (multiplicativa, preserva a
+   fase), com **desfazer/refazer**, *resetar* e *inverter*.
+4. **Aplicar (IFFT)** calcula `G = H·F`, a inversa, a parte real e `(-1)^(x+y)`. A saída pode ser *normalizada
+   min-max* (padrão) ou *recortada em [0,255]*; *Usar resultado como imagem de trabalho* o aplica.
 
 **Imagem colorida**: o espectro é o da intensidade `I = (R+G+B)/3` (a mesma do HSI) e a filtragem atua sobre ela.
-*Usar resultado como imagem de trabalho* substitui só o plano I (`applyToPlanes` com `IntensityHSI`), então matiz e
-saturação são preservados; em imagem cinza isso equivale a trocar a imagem pelo resultado.
+A pré-visualização da imagem filtrada é **colorida**: o plano I filtrado substitui o I da imagem de trabalho
+(`applyToPlanes` com `IntensityHSI`), preservando matiz e saturação; *Usar resultado como imagem de trabalho* aplica
+exatamente essa mesma operação. Em imagem cinza o resultado continua cinza.
 
-### Algoritmos selecionáveis
+### Algoritmo
 
-| Algoritmo | Código | Custo | Observações |
-|---|---|---|---|
-| **DFT própria (ingênua separável)** | `FrequencyTransform.cpp` | `O(MN(M+N))` | linhas e depois colunas; tabela `W[(u·x) mod M]` com soma incremental do índice; multi-thread |
-| **FFT própria (radix-2)** | `FrequencyTransform.cpp` | `O(MN log MN)` | "duplicação sucessiva" (Seção 4.11.3), iterativa com inversão de bits; `P` e `Q` viram potências de 2 |
-| **FFT da biblioteca** | pocketfft | `O(MN log MN)` | alternativa para imagens grandes; só este modo usa biblioteca |
-
-A inversa usa **um único algoritmo direto**: `f = conj(DFT{conj(F)}) / (MN)` (Seção 4.11.2). A GUI estima o tempo da
-DFT ingênua, avisa (e sugere a FFT) acima de `512 x 512` após o preenchimento, roda a DFT/IDFT em **outro thread** com
-barra de progresso e botão *Cancelar*, e mostra os tempos na barra de status. Limite: `P x Q <= 4096 x 4096`.
+Somente a **FFT própria radix-2** (`FrequencyTransform.cpp`, `O(MN log MN)`): "duplicação sucessiva" (Seção 4.11.3),
+iterativa com inversão de bits, separável (linhas e depois colunas), multi-thread. A inversa usa a mesma FFT direta:
+`f = conj(FFT{conj(F)}) / (MN)` (Seção 4.11.2). A DFT/IFFT roda em **outro thread** com barra de progresso e botão
+*Cancelar*. Limite: `P x Q <= 4096 x 4096`.
 
 ### Detalhes e convenções
 
-* Preenchimento: `P = 2M, Q = 2N` (DFT ingênua / biblioteca) ou a próxima potência de 2 `>= 2M-1` (FFT própria).
-  Sem preenchimento, `P = M, Q = N` arredondados para par (ou potência de 2), com *wraparound*.
+* Dimensões (`computeTransformSize`): **sem preenchimento** (não há `P >= 2M-1`). Como a radix-2 exige potências de 2,
+  `P` e `Q` são a menor potência de 2 `>= M` e `>= N` (ex.: `720 x 1280` -> `1024 x 2048`); se `M` e `N` já forem
+  potências de 2, `P = M` e `Q = N`. Há *wraparound* (convolução circular). A imagem é copiada direto para a matriz de
+  entrada e, na saída, só a região `M x N` é lida da matriz da IFFT.
 * **Simetria conjugada**: cada pincelada é espelhada em `((P-u) mod P, (Q-v) mod Q)` combinando os alfas antes de
   aplicar (`a = 1 - (1-a1)(1-a2)`), então `H` fica exatamente simétrica e a imagem resultante é real
   (a GUI mostra `max|Im|/max|Re|`, ~1e-16).
@@ -185,14 +181,6 @@ barra de progresso e botão *Cancelar*, e mostra os tempos na barra de status. L
   núcleo plano de raio `raio - 3σ`, de modo que **dureza 1 vira quase um disco** (como pede o plano); abaixo disso é
   exatamente a fórmula do plano.
 * O espectro exibido durante a edição é `|H·F|`; a textura é atualizada só na região pintada.
-* Filtros **ideais** produzem *ringing* (resposta espacial tipo sinc); Butterworth de baixa ordem e gaussiano, não.
-
-### FFT da biblioteca (pocketfft)
-
-O CMake baixa o [pocketfft](https://github.com/mreineck/pocketfft) (header-only, BSD) com `FetchContent`, como já
-faz com a GLFW. Sem internet, o programa compila normalmente e esse modo aparece desabilitado na lista. Também é
-possível usar uma cópia local: `cmake -S . -B build -DPOCKETFFT_INCLUDE_DIR=/caminho/com/pocketfft_hdronly.hpp`, ou
-desligar com `-DPROCESSADOR_USE_POCKETFFT=OFF`. Nenhuma função de biblioteca é usada nos modos "própria".
 
 ---
 
@@ -254,8 +242,7 @@ cmake --build build --target run_tests
 Compila e executa todos os `tests/test_*.cpp` (`test_spatial.cpp`: escala 1,0 e rotação 0° exatas, escala ×2 por
 replicação, bilinear em imagem constante, rotação de 90/180/270° contra a rotação "à mão", ida e volta, pivô fixo,
 bilinear contra implementação de referência independente etc.) e `test_frequency.cpp` (exemplos do livro
-`{1,2,4,4}` e `{1,2,3,4}`; DFT ingênua e FFT contra um oráculo de força bruta em vários tamanhos, inclusive não
-quadrados; `IDFT(DFT(f)) = f`; `F(0,0) = MN·média`; simetria conjugada; translação não altera `|F|`; `H ≡ 1` devolve a
+`{1,2,4,4}` e `{1,2,3,4}`; a FFT contra um oráculo de força bruta em vários tamanhos, inclusive não
+quadrados; `IFFT(FFT(f)) = f`; `F(0,0) = MN·média`; simetria conjugada; translação não altera `|F|`; `H ≡ 1` devolve a
 imagem; pincelada simétrica mantém o resultado real; desfazer/refazer; passa-baixa borra e passa-alta realça;
-fórmulas dos filtros; remoção de padrão periódico por notch). Com a biblioteca compilada, os testes também a
-comparam com os algoritmos próprios.
+fórmulas dos filtros; remoção de padrão periódico por notch).

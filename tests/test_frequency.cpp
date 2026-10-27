@@ -40,6 +40,21 @@ namespace {
         return F;
     }
 
+    // Oraculo 1-D ingenuo (so para os testes): F(u) = sum f(x) e^{-j2pi ux/M}
+    std::vector<Complex> naiveDft1d(const std::vector<Complex>& f) {
+        const int n = static_cast<int>(f.size());
+        std::vector<Complex> F(f.size());
+        for (int u = 0; u < n; ++u) {
+            Complex s(0, 0);
+            for (int x = 0; x < n; ++x) {
+                const double ang = -2.0 * kPi * static_cast<double>(u) * x / n;
+                s += f[static_cast<size_t>(x)] * Complex(std::cos(ang), std::sin(ang));
+            }
+            F[static_cast<size_t>(u)] = s;
+        }
+        return F;
+    }
+
     double relError(const ComplexMatrix& a, const ComplexMatrix& b) {
         double num = 0, den = 0;
         for (size_t i = 0; i < a.data.size(); ++i) {
@@ -47,13 +62,6 @@ namespace {
             den += std::norm(b.data[i]);
         }
         return std::sqrt(num / std::max(den, 1e-300));
-    }
-
-    std::vector<TransformAlgorithm> algorithmsFor(int rows, int cols) {
-        std::vector<TransformAlgorithm> a{TransformAlgorithm::NaiveDFT};
-        if (isPowerOfTwo(rows) && isPowerOfTwo(cols)) a.push_back(TransformAlgorithm::RadixFFT);
-        if (libraryFFTAvailable()) a.push_back(TransformAlgorithm::LibraryFFT);
-        return a;
     }
 
     Image randomImage(int rows, int cols, unsigned seed) {
@@ -80,100 +88,81 @@ namespace {
 
 }
 
-// 1. Exemplos do livro (Exemplo 4.4)
-TEST(dft_1d_exemplos_do_livro) {
-    auto F = dft1d({1, 2, 4, 4});
-    CHECK_NEAR(F[0].real(), 11, 1e-12);                                  CHECK_NEAR(F[0].imag(), 0, 1e-12);
-    CHECK_NEAR(F[1].real(), -3, 1e-12);                                  CHECK_NEAR(F[1].imag(), 2, 1e-12);
-    CHECK_NEAR(F[2].real(), -1, 1e-12);                                  CHECK_NEAR(F[2].imag(), 0, 1e-12);
-    CHECK_NEAR(F[3].real(), -3, 1e-12);                                  CHECK_NEAR(F[3].imag(), -2, 1e-12);
+// 1. Exemplos do livro (Exemplo 4.4) com a FFT propria
+TEST(fft_1d_exemplos_do_livro) {
+    auto F = fft1d({1, 2, 4, 4});
+    CHECK_NEAR(F[0].real(), 11, 1e-12);  CHECK_NEAR(F[0].imag(), 0, 1e-12);
+    CHECK_NEAR(F[1].real(), -3, 1e-12);  CHECK_NEAR(F[1].imag(), 2, 1e-12);
+    CHECK_NEAR(F[2].real(), -1, 1e-12);  CHECK_NEAR(F[2].imag(), 0, 1e-12);
+    CHECK_NEAR(F[3].real(), -3, 1e-12);  CHECK_NEAR(F[3].imag(), -2, 1e-12);
 
-    auto G = dft1d({1, 2, 3, 4});
+    auto G = fft1d({1, 2, 3, 4});
     CHECK_NEAR(G[0].real(), 10, 1e-12);
     CHECK_NEAR(G[1].real(), -2, 1e-12);  CHECK_NEAR(G[1].imag(), 2, 1e-12);
     CHECK_NEAR(G[2].real(), -2, 1e-12);
     CHECK_NEAR(G[3].real(), -2, 1e-12);  CHECK_NEAR(G[3].imag(), -2, 1e-12);
 
-    // a FFT propria produz o mesmo
-    auto Ff = fft1d({1, 2, 4, 4});
-    for (int i = 0; i < 4; ++i) CHECK_NEAR(std::abs(Ff[i] - F[i]), 0.0, 1e-12);
-
-    // inversa
-    auto back = idft1d(F);
-    CHECK_NEAR(back[0].real(), 1, 1e-12);
-    CHECK_NEAR(back[2].real(), 4, 1e-12);
-
     CHECK(fft1d({1, 2, 3}).empty());     // nao e potencia de 2
 }
 
-// 2. Todos os algoritmos contra o oraculo de forca bruta (tamanhos variados, nao quadrados)
-TEST(dft_2d_contra_oraculo) {
-    const int sizes[][2] = {{8, 8}, {4, 16}, {16, 4}, {6, 10}, {9, 7}, {1, 8}, {8, 1}, {5, 5}, {32, 8}};
-    for (auto& s : sizes) {
-        ComplexMatrix f = randomMatrix(s[0], s[1], 100 + s[0] * 31 + s[1]);
-        ComplexMatrix ref = bruteForceDft2d(f);
-        for (TransformAlgorithm a : algorithmsFor(s[0], s[1])) {
-            ComplexMatrix m = f;
-            CHECK(forwardTransform2D(m, a));
-            CHECK(relError(m, ref) < 1e-9);
-        }
+TEST(fft_1d_contra_oraculo) {
+    for (int n : {1, 2, 8, 64}) {
+        std::vector<Complex> f(static_cast<size_t>(n));
+        for (int i = 0; i < n; ++i) f[static_cast<size_t>(i)] = Complex(std::sin(i * 1.3) * 50, std::cos(i * 0.7) * 20);
+        auto a = fft1d(f), b = naiveDft1d(f);
+        for (int i = 0; i < n; ++i) CHECK_NEAR(std::abs(a[static_cast<size_t>(i)] - b[static_cast<size_t>(i)]), 0.0, 1e-9);
     }
 }
 
-TEST(algoritmos_concordam_em_tamanho_maior) {
-    ComplexMatrix f = randomMatrix(64, 128, 7);
-    ComplexMatrix a = f, b = f;
-    CHECK(forwardTransform2D(a, TransformAlgorithm::NaiveDFT));
-    CHECK(forwardTransform2D(b, TransformAlgorithm::RadixFFT));
-    CHECK(relError(a, b) < 1e-9);
-    if (libraryFFTAvailable()) {
-        ComplexMatrix c = f;
-        CHECK(forwardTransform2D(c, TransformAlgorithm::LibraryFFT));
-        CHECK(relError(c, b) < 1e-9);
+// 2. FFT 2-D contra o oraculo de forca bruta (potencias de 2, nao quadrados)
+TEST(fft_2d_contra_oraculo) {
+    const int sizes[][2] = {{8, 8}, {4, 16}, {16, 4}, {1, 8}, {8, 1}, {32, 8}};
+    for (auto& s : sizes) {
+        ComplexMatrix f = randomMatrix(s[0], s[1], 100 + s[0] * 31 + s[1]);
+        ComplexMatrix ref = bruteForceDft2d(f);
+        ComplexMatrix m = f;
+        CHECK(forwardTransform2D(m));
+        CHECK(relError(m, ref) < 1e-9);
     }
 }
 
 TEST(radix2_recusa_tamanho_invalido) {
     ComplexMatrix m = randomMatrix(6, 8, 1);
-    CHECK(!forwardTransform2D(m, TransformAlgorithm::RadixFFT));
+    CHECK(!forwardTransform2D(m));
 }
 
-// 3. IDFT(DFT(f)) == f
+// 3. IFFT(FFT(f)) == f
 TEST(inversa_recupera_a_imagem) {
-    const int sizes[][2] = {{16, 16}, {8, 32}, {12, 10}};
+    const int sizes[][2] = {{16, 16}, {8, 32}, {2, 64}};
     for (auto& s : sizes) {
         ComplexMatrix f = randomMatrix(s[0], s[1], 3);
-        for (TransformAlgorithm a : algorithmsFor(s[0], s[1])) {
-            ComplexMatrix m = f;
-            CHECK(forwardTransform2D(m, a));
-            CHECK(inverseTransform2D(m, a));
-            CHECK(relError(m, f) < 1e-9);
-        }
+        ComplexMatrix m = f;
+        CHECK(forwardTransform2D(m));
+        CHECK(inverseTransform2D(m));
+        CHECK(relError(m, f) < 1e-9);
     }
 }
 
 // 4. F(0,0) = M N media(f)
 TEST(termo_dc) {
-    ComplexMatrix f = randomMatrix(12, 20, 4);
+    ComplexMatrix f = randomMatrix(16, 32, 4);
     double sum = 0;
     for (auto& v : f.data) sum += v.real();
     const double mean = sum / f.data.size();
-    for (TransformAlgorithm a : algorithmsFor(12, 20)) {
-        ComplexMatrix m = f;
-        forwardTransform2D(m, a);
-        CHECK_NEAR(m.at(0, 0).real(), 12.0 * 20.0 * mean, 1e-8);
-        CHECK_NEAR(m.at(0, 0).imag(), 0.0, 1e-8);
-    }
+    ComplexMatrix m = f;
+    forwardTransform2D(m);
+    CHECK_NEAR(m.at(0, 0).real(), 16.0 * 32.0 * mean, 1e-8);
+    CHECK_NEAR(m.at(0, 0).imag(), 0.0, 1e-8);
 }
 
 // 5. Simetria conjugada
 TEST(simetria_conjugada) {
-    ComplexMatrix m = randomMatrix(16, 24, 5);
-    forwardTransform2D(m, TransformAlgorithm::NaiveDFT);
+    ComplexMatrix m = randomMatrix(16, 32, 5);
+    forwardTransform2D(m);
     double maxErr = 0;
     for (int u = 0; u < 16; ++u)
-        for (int v = 0; v < 24; ++v)
-            maxErr = std::max(maxErr, std::abs(m.at((16 - u) % 16, (24 - v) % 24) - std::conj(m.at(u, v))));
+        for (int v = 0; v < 32; ++v)
+            maxErr = std::max(maxErr, std::abs(m.at((16 - u) % 16, (32 - v) % 32) - std::conj(m.at(u, v))));
     CHECK(maxErr < 1e-8);
 }
 
@@ -183,72 +172,42 @@ TEST(translacao_nao_altera_magnitude) {
     ComplexMatrix g(16, 16);
     for (int x = 0; x < 16; ++x)
         for (int y = 0; y < 16; ++y) g.at((x + 3) % 16, (y + 5) % 16) = f.at(x, y);
-    forwardTransform2D(f, TransformAlgorithm::RadixFFT);
-    forwardTransform2D(g, TransformAlgorithm::RadixFFT);
+    forwardTransform2D(f);
+    forwardTransform2D(g);
     double maxErr = 0;
     for (size_t i = 0; i < f.data.size(); ++i)
         maxErr = std::max(maxErr, std::fabs(std::abs(f.data[i]) - std::abs(g.data[i])));
     CHECK(maxErr < 1e-8);
 }
 
-// Preenchimento (Secao 4.6)
-TEST(tamanhos_de_preenchimento) {
-    PaddedSize s = computePaddedSize(30, 50, TransformAlgorithm::NaiveDFT, true);
-    CHECK(s.P == 60 && s.Q == 100);
-    s = computePaddedSize(30, 50, TransformAlgorithm::LibraryFFT, true);
-    CHECK(s.P == 60 && s.Q == 100);
-    s = computePaddedSize(30, 50, TransformAlgorithm::RadixFFT, true);       // >= 2M-1 = 59, 99
-    CHECK(s.P == 64 && s.Q == 128);
-    s = computePaddedSize(32, 64, TransformAlgorithm::RadixFFT, true);       // >= 63, 127
-    CHECK(s.P == 64 && s.Q == 128);
-    s = computePaddedSize(31, 51, TransformAlgorithm::NaiveDFT, false);      // sem preench.: par
-    CHECK(s.P == 32 && s.Q == 52);
-    s = computePaddedSize(30, 50, TransformAlgorithm::RadixFFT, false);
+// Dimensoes P x Q: sem preenchimento (so arredonda para a proxima potencia de 2)
+TEST(tamanhos_sem_preenchimento) {
+    TransformSize s = computeTransformSize(720, 1280);
+    CHECK(s.P == 1024 && s.Q == 2048);
+    s = computeTransformSize(30, 50);
     CHECK(s.P == 32 && s.Q == 64);
-    s = computePaddedSize(1, 1, TransformAlgorithm::RadixFFT, true);
+    s = computeTransformSize(32, 64);            // ja potencias de 2: P = M, Q = N
+    CHECK(s.P == 32 && s.Q == 64);
+    s = computeTransformSize(1, 1);
     CHECK(s.P == 2 && s.Q == 2);
 }
 
-// 7. H = 1 devolve a imagem de entrada (apos o recorte), para todos os algoritmos e com/sem preenchimento
+// 7. H = 1 devolve a imagem de entrada (tamanhos potencia de 2 e nao potencia de 2)
 TEST(filtro_identidade_devolve_a_imagem) {
-    Image img = randomImage(21, 30, 8);
-    for (TransformAlgorithm a : {TransformAlgorithm::NaiveDFT, TransformAlgorithm::RadixFFT, TransformAlgorithm::LibraryFFT}) {
-        if (a == TransformAlgorithm::LibraryFFT && !libraryFFTAvailable()) continue;
-        for (bool pad : {true, false}) {
-            FrequencySession s;
-            CHECK(s.compute(img, a, pad));
-            CHECK(s.filter(a));
-            double maxErr = 0;
-            for (int x = 0; x < 21; ++x)
-                for (int y = 0; y < 30; ++y)
-                    maxErr = std::max(maxErr, std::fabs(s.resultRaw()[static_cast<size_t>(x) * 30 + y] - img.pixel(x, y)));
-            CHECK(maxErr < 1e-8);
-            Image out = s.resultImage(OutputNormalization::Clip);
-            CHECK(out.getData() == img.getData());
-        }
-    }
-}
-
-TEST(sessao_algoritmos_dao_o_mesmo_filtrado) {
-    // 32 x 32 com preenchimento => P = Q = 64 em TODOS os algoritmos, entao o
-    // mesmo filtro H vale para todos e os resultados devem coincidir.
-    Image img = testScene(32, 32);
-    FilterParams p;
-    p.kind = FilterKind::LowPass; p.shape = FilterShape::Gaussian; p.d0 = 6.0;
-    std::vector<std::vector<double>> results;
-    for (TransformAlgorithm a : {TransformAlgorithm::NaiveDFT, TransformAlgorithm::RadixFFT, TransformAlgorithm::LibraryFFT}) {
-        if (a == TransformAlgorithm::LibraryFFT && !libraryFFTAvailable()) continue;
+    const int sizes[][2] = {{21, 30}, {32, 64}, {17, 5}};
+    for (auto& sz : sizes) {
+        Image img = randomImage(sz[0], sz[1], 8);
         FrequencySession s;
-        CHECK(s.compute(img, a, true));
-        CHECK(s.P() == 64 && s.Q() == 64);
-        s.mask().multiplyBy(makeFilter(s.P(), s.Q(), p));
-        CHECK(s.filter(a));
-        results.push_back(s.resultRaw());
-    }
-    for (size_t k = 1; k < results.size(); ++k) {
+        CHECK(s.compute(img));
+        CHECK(s.filter());
         double maxErr = 0;
-        for (size_t i = 0; i < results[0].size(); ++i) maxErr = std::max(maxErr, std::fabs(results[0][i] - results[k][i]));
+        for (int x = 0; x < sz[0]; ++x)
+            for (int y = 0; y < sz[1]; ++y)
+                maxErr = std::max(maxErr, std::fabs(s.resultRaw()[static_cast<size_t>(x) * sz[1] + y] - img.pixel(x, y)));
         CHECK(maxErr < 1e-8);
+        Image out = s.resultImage(OutputNormalization::Clip);
+        CHECK(out.getRows() == sz[0] && out.getCols() == sz[1]);
+        CHECK(out.getData() == img.getData());
     }
 }
 
@@ -256,7 +215,7 @@ TEST(sessao_algoritmos_dao_o_mesmo_filtrado) {
 TEST(pincelada_simetrica_mantem_resultado_real) {
     Image img = testScene(30, 40);
     FrequencySession s;
-    CHECK(s.compute(img, TransformAlgorithm::RadixFFT, true));
+    CHECK(s.compute(img));
     const int P = s.P(), Q = s.Q();
 
     Brush b;
@@ -279,7 +238,7 @@ TEST(pincelada_simetrica_mantem_resultado_real) {
     CHECK(exact);
     CHECK(changed);
 
-    CHECK(s.filter(TransformAlgorithm::RadixFFT));
+    CHECK(s.filter());
     CHECK(s.residualImag() < 1e-8);
 }
 
@@ -355,7 +314,7 @@ TEST(desfazer_refazer_restauram_a_mascara) {
 
 // 9. Passa-baixa gaussiano borra; passa-alta realca bordas
 TEST(passa_baixa_borra_e_passa_alta_realca) {
-    Image img = testScene(48, 48);
+    Image img = testScene(64, 64);
 
     auto energyHighFreq = [](const std::vector<double>& g, int M, int N) {
         // energia de alta frequencia ~ soma dos quadrados das diferencas entre vizinhos
@@ -367,18 +326,18 @@ TEST(passa_baixa_borra_e_passa_alta_realca) {
             }
         return e;
     };
-    std::vector<double> orig(48 * 48);
-    for (int x = 0; x < 48; ++x) for (int y = 0; y < 48; ++y) orig[static_cast<size_t>(x) * 48 + y] = img.pixel(x, y);
-    const double e0 = energyHighFreq(orig, 48, 48);
+    std::vector<double> orig(64 * 64);
+    for (int x = 0; x < 64; ++x) for (int y = 0; y < 64; ++y) orig[static_cast<size_t>(x) * 64 + y] = img.pixel(x, y);
+    const double e0 = energyHighFreq(orig, 64, 64);
 
     double eLow = 0, eHigh = 0;
     for (FilterKind k : {FilterKind::LowPass, FilterKind::HighPass}) {
         FrequencySession s;
-        CHECK(s.compute(img, TransformAlgorithm::RadixFFT, true));
+        CHECK(s.compute(img));
         FilterParams p; p.kind = k; p.shape = FilterShape::Gaussian; p.d0 = 6.0;
         s.mask().multiplyBy(makeFilter(s.P(), s.Q(), p));
-        CHECK(s.filter(TransformAlgorithm::RadixFFT));
-        const double e = energyHighFreq(s.resultRaw(), 48, 48);
+        CHECK(s.filter());
+        const double e = energyHighFreq(s.resultRaw(), 64, 64);
         (k == FilterKind::LowPass ? eLow : eHigh) = e;
     }
     CHECK(eLow < 0.30 * e0);     // passa-baixa: borrou (perdeu energia de alta frequencia)
@@ -470,10 +429,10 @@ TEST(notch_remove_padrao_periodico_moire) {
     const double before = mse(clean, noisyRaw);
 
     FrequencySession s;
-    CHECK(s.compute(noisy, TransformAlgorithm::RadixFFT, false));   // P = Q = 64: a senoide cai exatamente em (6,10)
+    CHECK(s.compute(noisy));   // P = Q = 64: a senoide cai exatamente em (6,10)
     const double scale = s.P() / static_cast<double>(M);
     s.mask().multiplyBy(makeNotchRejectAt(s.P(), s.Q(), s.P() / 2.0 + 6 * scale, s.Q() / 2.0 + 10 * scale, 2.5, 2, FilterShape::Gaussian));
-    CHECK(s.filter(TransformAlgorithm::RadixFFT));
+    CHECK(s.filter());
     const double after = mse(clean, s.resultRaw());
     CHECK(after < 0.1 * before);
 }
@@ -481,23 +440,23 @@ TEST(notch_remove_padrao_periodico_moire) {
 TEST(sessao_validacoes) {
     Image empty(0, 0);
     FrequencySession s;
-    CHECK(!s.compute(empty, TransformAlgorithm::RadixFFT, true));
-    CHECK(!s.filter(TransformAlgorithm::RadixFFT));          // sem DFT calculada
+    CHECK(!s.compute(empty));
+    CHECK(!s.filter());                       // sem FFT calculada
     Image img = randomImage(10, 10, 1);
-    CHECK(s.compute(img, TransformAlgorithm::NaiveDFT, true));
-    CHECK(!s.filter(TransformAlgorithm::RadixFFT));          // P=20 nao e potencia de 2
+    CHECK(s.compute(img));
+    CHECK(s.P() == 16 && s.Q() == 16);
     // cancelamento
     TransformControl ctl;
     ctl.cancel = true;
     FrequencySession s2;
-    CHECK(!s2.compute(img, TransformAlgorithm::NaiveDFT, true, &ctl));
+    CHECK(!s2.compute(img, &ctl));
     CHECK(!s2.hasTransform());
 }
 
 TEST(espectro_normalizacao_e_exibicao) {
     Image img = testScene(16, 16);
     FrequencySession s;
-    CHECK(s.compute(img, TransformAlgorithm::RadixFFT, false));     // sem preenchimento: P = M, Q = N
+    CHECK(s.compute(img));     // 16 x 16 ja e potencia de 2: P = M, Q = N
     // o termo DC (centro) e o maximo: 255 no espectro original
     s.setDisplayMode(DisplayMode::OriginalSpectrum);
     s.renderAll();
@@ -509,7 +468,7 @@ TEST(espectro_normalizacao_e_exibicao) {
     s.setDisplayMode(DisplayMode::FilteredSpectrum);
     s.renderAll();
     CHECK(s.displayRGBA()[(static_cast<size_t>(c) * s.Q() + d) * 4] == 0);
-    CHECK(s.filter(TransformAlgorithm::RadixFFT));
+    CHECK(s.filter());
     // F(0,0)=0 => media nula; resultado normalizado min-max fica em [0, 255]
     double mean = 0; for (double v : s.resultRaw()) mean += v; mean /= s.resultRaw().size();
     CHECK(std::fabs(mean) < 1e-8);

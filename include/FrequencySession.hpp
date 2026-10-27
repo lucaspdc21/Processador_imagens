@@ -9,27 +9,22 @@
 namespace core {
 
     // Limite de seguranca: P x Q maximo (complex128 = 16 bytes por ponto).
-    constexpr long long kMaxPaddedPixels = 4096LL * 4096LL;
+    constexpr long long kMaxTransformPixels = 4096LL * 4096LL;
 
-    struct PaddedSize {
+    struct TransformSize {
         int P = 0;
         int Q = 0;
     };
 
-    // Tamanho P x Q da transformada (Secao 4.6):
-    //  Com preenchimento: P >= 2M-1 e Q >= 2N-1 (evita wraparound).
-    //     DFT ingenua / biblioteca: P = 2M, Q = 2N (pares).
-    //     FFT radix-2 propria:      proxima potencia de 2 >= 2M-1 (idem Q).
-    //  Sem preenchimento: P = M, Q = N (mais rapido, com wraparound), apenas
-    //     arredondando para PAR (necessario para centralizar por (-1)^(x+y));
-    //     na FFT radix-2, para a potencia de 2 seguinte.
-    PaddedSize computePaddedSize(int M, int N, TransformAlgorithm algo, bool usePadding);
+    // Tamanho P x Q da transformada, SEM preenchimento (zero-padding de 2M x 2N):
+    //  a FFT radix-2 exige potencias de 2, entao P e Q sao apenas a menor
+    //  potencia de 2 >= M e >= N (minimo 2, para que (-1)^(x+y) centralize).
+    //  Ex.: 720 x 1280 -> 1024 x 2048 (e nao 2048 x 4096, como seria com P >= 2M-1).
+    TransformSize computeTransformSize(int M, int N);
 
     enum class DisplayMode {
         FilteredSpectrum,   // log(1 + |H F|)  (o que o usuario riscou)
-        OriginalSpectrum,   // log(1 + |F|)
-        MaskView,           // a propria mascara H
-        Phase               // fase de F, normalizada (so informativa)
+        OriginalSpectrum    // log(1 + |F|)
     };
 
     enum class OutputNormalization {
@@ -42,15 +37,17 @@ namespace core {
     // recalcula G = H F e a inversa.
     class FrequencySession {
     public:
-        // Passos 1-3: preenche com zeros (P x Q, imagem no canto superior
-        // esquerdo), multiplica por (-1)^(x+y) (centraliza) e calcula F.
-        // Pesado: a GUI chama em outro thread. Retorna false se cancelado ou
-        // se os parametros forem invalidos (mensagem em lastError()).
-        bool compute(Image& img, TransformAlgorithm algo, bool usePadding, TransformControl* control = nullptr);
+        // Passos 1-3: copia a imagem direto para a matriz de entrada P x Q da
+        // FFT (sem preenchimento 2M x 2N; P e Q so sobem ate a potencia de 2
+        // exigida pela radix-2), multiplica por (-1)^(x+y) (centraliza) e
+        // calcula F. Pesado: a GUI chama em outro thread. Retorna false se
+        // cancelado ou se os parametros forem invalidos (ver lastError()).
+        bool compute(Image& img, TransformControl* control = nullptr);
 
-        // Passos 5-7: G = H F, IDFT, parte real, (-1)^(x+y), recorte [0:M, 0:N].
-        // O resultado bruto fica em resultRaw() (double, M x N).
-        bool filter(TransformAlgorithm algo, TransformControl* control = nullptr);
+        // Passos 5-7: G = H F, IFFT, parte real e (-1)^(x+y). O resultado bruto
+        // (M x N, double) fica em resultRaw(): so a regiao da imagem e lida da
+        // matriz da IFFT (nao ha recorte de uma matriz expandida 2M x 2N).
+        bool filter(TransformControl* control = nullptr);
 
         bool hasTransform() const { return hasF_; }
         bool hasResult() const { return hasResult_; }
@@ -60,7 +57,6 @@ namespace core {
         int N() const { return N_; }
         int P() const { return P_; }
         int Q() const { return Q_; }
-        TransformAlgorithm algorithm() const { return algo_; }
         const ComplexMatrix& spectrum() const { return F_; }
 
         // S_max = max log(1 + |F|) do espectro original (normaliza a exibicao).
@@ -93,7 +89,6 @@ namespace core {
         int M_ = 0, N_ = 0, P_ = 0, Q_ = 0;
         int maxIntensity_ = 255, bits_ = 8;
         double dpi_ = 72.0;
-        TransformAlgorithm algo_ = TransformAlgorithm::RadixFFT;
         ComplexMatrix F_;
         double logMax_ = 1.0;
         SpectrumMask mask_;

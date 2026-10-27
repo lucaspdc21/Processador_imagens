@@ -1,0 +1,1676 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 377af1d..7b7e2de 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -40,37 +40,6 @@ target_include_directories(core PUBLIC
+ find_package(Threads REQUIRED)
+ target_link_libraries(core PUBLIC Threads::Threads)
+ 
+-# --- FFT da biblioteca (pocketfft, header-only, BSD) -------------------------
+-# Usada somente no modo "FFT da biblioteca" e como oraculo nos testes; a DFT
+-# ingenua e a FFT radix-2 sao codigo proprio. Se o download falhar (sem
+-# internet), o programa compila normalmente e esse modo fica desabilitado.
+-# Para usar uma copia local: -DPOCKETFFT_INCLUDE_DIR=/caminho/da/pasta
+-option(PROCESSADOR_USE_POCKETFFT "Habilita o modo 'FFT da biblioteca' (pocketfft)" ON)
+-if(PROCESSADOR_USE_POCKETFFT)
+-    include(FetchContent)
+-    if(NOT POCKETFFT_INCLUDE_DIR)
+-        FetchContent_Declare(
+-            pocketfft
+-            GIT_REPOSITORY https://github.com/mreineck/pocketfft.git
+-            GIT_TAG        cpp
+-            GIT_SHALLOW    TRUE
+-        )
+-        # So baixa (nao ha nada a compilar: e header-only).
+-        FetchContent_GetProperties(pocketfft)
+-        if(NOT pocketfft_POPULATED)
+-            FetchContent_Populate(pocketfft)
+-        endif()
+-        set(POCKETFFT_INCLUDE_DIR ${pocketfft_SOURCE_DIR})
+-    endif()
+-    if(EXISTS ${POCKETFFT_INCLUDE_DIR}/pocketfft_hdronly.hpp)
+-        target_include_directories(core PUBLIC ${POCKETFFT_INCLUDE_DIR})
+-        target_compile_definitions(core PUBLIC HAVE_POCKETFFT POCKETFFT_NO_MULTITHREADING)
+-        message(STATUS "FFT da biblioteca: pocketfft em ${POCKETFFT_INCLUDE_DIR}")
+-    else()
+-        message(WARNING "pocketfft_hdronly.hpp nao encontrado: o modo 'FFT da biblioteca' ficara desabilitado.")
+-    endif()
+-endif()
+-
+ find_package(OpenGL REQUIRED)
+ 
+ include(FetchContent)
+diff --git a/README.md b/README.md
+index 460dea9..1bcdeff 100644
+--- a/README.md
++++ b/README.md
+@@ -43,10 +43,10 @@ Processador/
+ │   ├── ImageWarp.hpp        # matriz afim, interpolação (vizinho/bilinear) e warp inverso
+ │   ├── ImageScale.hpp       # escala (sx, sy independentes) + suavização antes de reduzir
+ │   ├── ImageRotate.hpp      # rotação com pivô (manter tamanho / expandir)
+-│   ├── FrequencyTransform.hpp # DFT ingênua, FFT radix-2 própria, FFT da biblioteca, inversa
++│   ├── FrequencyTransform.hpp # FFT radix-2 própria (direta e inversa 2-D)
+ │   ├── FrequencyFilters.hpp # filtros pré-definidos H(u,v): LP/HP/BR/BP/notch (ideal, Butterworth, gaussiano)
+ │   ├── FrequencyMask.hpp    # máscara H editável: pincel suave, simetria conjugada, desfazer/refazer
+-│   └── FrequencySession.hpp # roteiro completo: padding, centralização, F em cache, espectro, IDFT
++│   └── FrequencySession.hpp # roteiro completo: cópia direta, centralização, F em cache, espectro, IFFT
+ ├── src/                     # implementações do núcleo (um .cpp por header)
+ ├── tests/                   # testes automatizados
+ │   ├── color_tests.cpp      # testes do núcleo de cor (alvo color_tests)
+@@ -146,38 +146,34 @@ quando você clica em **Aplicar resultado à imagem de trabalho**.
+ Painel esquerdo → **Filtragem no domínio da frequência** → *Abrir filtragem em frequência*. A janela mostra
+ **entrada | espectro (editável) | imagem filtrada**. Fluxo (Seção 4.7.3 do plano):
+ 
+-1. Escolha o **algoritmo** e se usa **preenchimento**, e clique em **Calcular DFT**. A imagem é preenchida com zeros
+-   até `P x Q` (canto superior esquerdo), multiplicada por `(-1)^(x+y)` (centraliza a transformada) e transformada
+-   **uma única vez**; `F(u,v)` fica em cache (`complex128`).
+-2. O **espectro centralizado** é exibido como `log(1 + |F|)` normalizado por `S_max` (também há *original*,
+-   *máscara H* e *fase*).
++1. Clique em **Calcular FFT**. A imagem é copiada direto para a matriz `P x Q` da FFT (sem preenchimento com zeros
++   de `2M x 2N`), multiplicada por `(-1)^(x+y)` (centraliza a transformada) e transformada **uma única vez**;
++   `F(u,v)` fica em cache (`complex128`).
++2. O **espectro centralizado** é exibido como `log(1 + |F|)` normalizado por `S_max` (também há o *original*).
+ 3. **Edite** o espectro com o pincel (preto remove, branco restaura, cinza atenua; raio, dureza, opacidade, disco
+-   duro ou pincel suave gaussiano) ou com a ferramenta **notch por clique**, e/ou aplique **filtros pré-definidos**
+-   (passa/rejeita baixa, alta, faixa e notch; ideal, Butterworth, gaussiano). Tudo escreve na mesma máscara real
+-   `H(u,v)` em `[0,1]` (multiplicativa, preserva a fase), com **desfazer/refazer**, *resetar* e *inverter*.
+-4. **Aplicar (IDFT)** calcula `G = H·F`, a inversa, a parte real, `(-1)^(x+y)` e o recorte `[0:M, 0:N]`. A saída pode
+-   ser *normalizada min-max* (padrão) ou *recortada em [0,255]*; *Usar resultado como imagem de trabalho* o aplica.
++   duro ou pincel suave gaussiano). Tudo escreve na máscara real `H(u,v)` em `[0,1]` (multiplicativa, preserva a
++   fase), com **desfazer/refazer**, *resetar* e *inverter*.
++4. **Aplicar (IFFT)** calcula `G = H·F`, a inversa, a parte real e `(-1)^(x+y)`. A saída pode ser *normalizada
++   min-max* (padrão) ou *recortada em [0,255]*; *Usar resultado como imagem de trabalho* o aplica.
+ 
+ **Imagem colorida**: o espectro é o da intensidade `I = (R+G+B)/3` (a mesma do HSI) e a filtragem atua sobre ela.
+-*Usar resultado como imagem de trabalho* substitui só o plano I (`applyToPlanes` com `IntensityHSI`), então matiz e
+-saturação são preservados; em imagem cinza isso equivale a trocar a imagem pelo resultado.
++A pré-visualização da imagem filtrada é **colorida**: o plano I filtrado substitui o I da imagem de trabalho
++(`applyToPlanes` com `IntensityHSI`), preservando matiz e saturação; *Usar resultado como imagem de trabalho* aplica
++exatamente essa mesma operação. Em imagem cinza o resultado continua cinza.
+ 
+-### Algoritmos selecionáveis
++### Algoritmo
+ 
+-| Algoritmo | Código | Custo | Observações |
+-|---|---|---|---|
+-| **DFT própria (ingênua separável)** | `FrequencyTransform.cpp` | `O(MN(M+N))` | linhas e depois colunas; tabela `W[(u·x) mod M]` com soma incremental do índice; multi-thread |
+-| **FFT própria (radix-2)** | `FrequencyTransform.cpp` | `O(MN log MN)` | "duplicação sucessiva" (Seção 4.11.3), iterativa com inversão de bits; `P` e `Q` viram potências de 2 |
+-| **FFT da biblioteca** | pocketfft | `O(MN log MN)` | alternativa para imagens grandes; só este modo usa biblioteca |
+-
+-A inversa usa **um único algoritmo direto**: `f = conj(DFT{conj(F)}) / (MN)` (Seção 4.11.2). A GUI estima o tempo da
+-DFT ingênua, avisa (e sugere a FFT) acima de `512 x 512` após o preenchimento, roda a DFT/IDFT em **outro thread** com
+-barra de progresso e botão *Cancelar*, e mostra os tempos na barra de status. Limite: `P x Q <= 4096 x 4096`.
++Somente a **FFT própria radix-2** (`FrequencyTransform.cpp`, `O(MN log MN)`): "duplicação sucessiva" (Seção 4.11.3),
++iterativa com inversão de bits, separável (linhas e depois colunas), multi-thread. A inversa usa a mesma FFT direta:
++`f = conj(FFT{conj(F)}) / (MN)` (Seção 4.11.2). A DFT/IFFT roda em **outro thread** com barra de progresso e botão
++*Cancelar*. Limite: `P x Q <= 4096 x 4096`.
+ 
+ ### Detalhes e convenções
+ 
+-* Preenchimento: `P = 2M, Q = 2N` (DFT ingênua / biblioteca) ou a próxima potência de 2 `>= 2M-1` (FFT própria).
+-  Sem preenchimento, `P = M, Q = N` arredondados para par (ou potência de 2), com *wraparound*.
++* Dimensões (`computeTransformSize`): **sem preenchimento** (não há `P >= 2M-1`). Como a radix-2 exige potências de 2,
++  `P` e `Q` são a menor potência de 2 `>= M` e `>= N` (ex.: `720 x 1280` -> `1024 x 2048`); se `M` e `N` já forem
++  potências de 2, `P = M` e `Q = N`. Há *wraparound* (convolução circular). A imagem é copiada direto para a matriz de
++  entrada e, na saída, só a região `M x N` é lida da matriz da IFFT.
+ * **Simetria conjugada**: cada pincelada é espelhada em `((P-u) mod P, (Q-v) mod Q)` combinando os alfas antes de
+   aplicar (`a = 1 - (1-a1)(1-a2)`), então `H` fica exatamente simétrica e a imagem resultante é real
+   (a GUI mostra `max|Im|/max|Re|`, ~1e-16).
+@@ -185,14 +181,6 @@ barra de progresso e botão *Cancelar*, e mostra os tempos na barra de status. L
+   núcleo plano de raio `raio - 3σ`, de modo que **dureza 1 vira quase um disco** (como pede o plano); abaixo disso é
+   exatamente a fórmula do plano.
+ * O espectro exibido durante a edição é `|H·F|`; a textura é atualizada só na região pintada.
+-* Filtros **ideais** produzem *ringing* (resposta espacial tipo sinc); Butterworth de baixa ordem e gaussiano, não.
+-
+-### FFT da biblioteca (pocketfft)
+-
+-O CMake baixa o [pocketfft](https://github.com/mreineck/pocketfft) (header-only, BSD) com `FetchContent`, como já
+-faz com a GLFW. Sem internet, o programa compila normalmente e esse modo aparece desabilitado na lista. Também é
+-possível usar uma cópia local: `cmake -S . -B build -DPOCKETFFT_INCLUDE_DIR=/caminho/com/pocketfft_hdronly.hpp`, ou
+-desligar com `-DPROCESSADOR_USE_POCKETFFT=OFF`. Nenhuma função de biblioteca é usada nos modos "própria".
+ 
+ ---
+ 
+@@ -254,8 +242,7 @@ cmake --build build --target run_tests
+ Compila e executa todos os `tests/test_*.cpp` (`test_spatial.cpp`: escala 1,0 e rotação 0° exatas, escala ×2 por
+ replicação, bilinear em imagem constante, rotação de 90/180/270° contra a rotação "à mão", ida e volta, pivô fixo,
+ bilinear contra implementação de referência independente etc.) e `test_frequency.cpp` (exemplos do livro
+-`{1,2,4,4}` e `{1,2,3,4}`; DFT ingênua e FFT contra um oráculo de força bruta em vários tamanhos, inclusive não
+-quadrados; `IDFT(DFT(f)) = f`; `F(0,0) = MN·média`; simetria conjugada; translação não altera `|F|`; `H ≡ 1` devolve a
++`{1,2,4,4}` e `{1,2,3,4}`; a FFT contra um oráculo de força bruta em vários tamanhos, inclusive não
++quadrados; `IFFT(FFT(f)) = f`; `F(0,0) = MN·média`; simetria conjugada; translação não altera `|F|`; `H ≡ 1` devolve a
+ imagem; pincelada simétrica mantém o resultado real; desfazer/refazer; passa-baixa borra e passa-alta realça;
+-fórmulas dos filtros; remoção de padrão periódico por notch). Com a biblioteca compilada, os testes também a
+-comparam com os algoritmos próprios.
++fórmulas dos filtros; remoção de padrão periódico por notch).
+diff --git a/include/FrequencySession.hpp b/include/FrequencySession.hpp
+index b3632a7..05fb08e 100644
+--- a/include/FrequencySession.hpp
++++ b/include/FrequencySession.hpp
+@@ -9,27 +9,22 @@
+ namespace core {
+ 
+     // Limite de seguranca: P x Q maximo (complex128 = 16 bytes por ponto).
+-    constexpr long long kMaxPaddedPixels = 4096LL * 4096LL;
++    constexpr long long kMaxTransformPixels = 4096LL * 4096LL;
+ 
+-    struct PaddedSize {
++    struct TransformSize {
+         int P = 0;
+         int Q = 0;
+     };
+ 
+-    // Tamanho P x Q da transformada (Secao 4.6):
+-    //  Com preenchimento: P >= 2M-1 e Q >= 2N-1 (evita wraparound).
+-    //     DFT ingenua / biblioteca: P = 2M, Q = 2N (pares).
+-    //     FFT radix-2 propria:      proxima potencia de 2 >= 2M-1 (idem Q).
+-    //  Sem preenchimento: P = M, Q = N (mais rapido, com wraparound), apenas
+-    //     arredondando para PAR (necessario para centralizar por (-1)^(x+y));
+-    //     na FFT radix-2, para a potencia de 2 seguinte.
+-    PaddedSize computePaddedSize(int M, int N, TransformAlgorithm algo, bool usePadding);
++    // Tamanho P x Q da transformada, SEM preenchimento (zero-padding de 2M x 2N):
++    //  a FFT radix-2 exige potencias de 2, entao P e Q sao apenas a menor
++    //  potencia de 2 >= M e >= N (minimo 2, para que (-1)^(x+y) centralize).
++    //  Ex.: 720 x 1280 -> 1024 x 2048 (e nao 2048 x 4096, como seria com P >= 2M-1).
++    TransformSize computeTransformSize(int M, int N);
+ 
+     enum class DisplayMode {
+         FilteredSpectrum,   // log(1 + |H F|)  (o que o usuario riscou)
+-        OriginalSpectrum,   // log(1 + |F|)
+-        MaskView,           // a propria mascara H
+-        Phase               // fase de F, normalizada (so informativa)
++        OriginalSpectrum    // log(1 + |F|)
+     };
+ 
+     enum class OutputNormalization {
+@@ -42,15 +37,17 @@ namespace core {
+     // recalcula G = H F e a inversa.
+     class FrequencySession {
+     public:
+-        // Passos 1-3: preenche com zeros (P x Q, imagem no canto superior
+-        // esquerdo), multiplica por (-1)^(x+y) (centraliza) e calcula F.
+-        // Pesado: a GUI chama em outro thread. Retorna false se cancelado ou
+-        // se os parametros forem invalidos (mensagem em lastError()).
+-        bool compute(Image& img, TransformAlgorithm algo, bool usePadding, TransformControl* control = nullptr);
+-
+-        // Passos 5-7: G = H F, IDFT, parte real, (-1)^(x+y), recorte [0:M, 0:N].
+-        // O resultado bruto fica em resultRaw() (double, M x N).
+-        bool filter(TransformAlgorithm algo, TransformControl* control = nullptr);
++        // Passos 1-3: copia a imagem direto para a matriz de entrada P x Q da
++        // FFT (sem preenchimento 2M x 2N; P e Q so sobem ate a potencia de 2
++        // exigida pela radix-2), multiplica por (-1)^(x+y) (centraliza) e
++        // calcula F. Pesado: a GUI chama em outro thread. Retorna false se
++        // cancelado ou se os parametros forem invalidos (ver lastError()).
++        bool compute(Image& img, TransformControl* control = nullptr);
++
++        // Passos 5-7: G = H F, IFFT, parte real e (-1)^(x+y). O resultado bruto
++        // (M x N, double) fica em resultRaw(): so a regiao da imagem e lida da
++        // matriz da IFFT (nao ha recorte de uma matriz expandida 2M x 2N).
++        bool filter(TransformControl* control = nullptr);
+ 
+         bool hasTransform() const { return hasF_; }
+         bool hasResult() const { return hasResult_; }
+@@ -60,7 +57,6 @@ namespace core {
+         int N() const { return N_; }
+         int P() const { return P_; }
+         int Q() const { return Q_; }
+-        TransformAlgorithm algorithm() const { return algo_; }
+         const ComplexMatrix& spectrum() const { return F_; }
+ 
+         // S_max = max log(1 + |F|) do espectro original (normaliza a exibicao).
+@@ -93,7 +89,6 @@ namespace core {
+         int M_ = 0, N_ = 0, P_ = 0, Q_ = 0;
+         int maxIntensity_ = 255, bits_ = 8;
+         double dpi_ = 72.0;
+-        TransformAlgorithm algo_ = TransformAlgorithm::RadixFFT;
+         ComplexMatrix F_;
+         double logMax_ = 1.0;
+         SpectrumMask mask_;
+diff --git a/include/FrequencyTransform.hpp b/include/FrequencyTransform.hpp
+index e000e9d..5498f49 100644
+--- a/include/FrequencyTransform.hpp
++++ b/include/FrequencyTransform.hpp
+@@ -23,18 +23,6 @@ namespace core {
+         const Complex& at(int r, int c) const { return data[static_cast<size_t>(r) * cols + c]; }
+     };
+ 
+-    // Algoritmos selecionaveis (Secao 4.11 do plano).
+-    enum class TransformAlgorithm {
+-        NaiveDFT,      // DFT propria "ingenua" separavel: O(MN(M+N))
+-        RadixFFT,      // FFT propria radix-2 (duplicacao sucessiva): O(MN log(MN))
+-        LibraryFFT     // FFT de biblioteca (pocketfft), quando disponivel
+-    };
+-
+-    const char* algorithmName(TransformAlgorithm algo);
+-
+-    // true se o programa foi compilado com a biblioteca de FFT (pocketfft).
+-    bool libraryFFTAvailable();
+-
+     // Progresso e cancelamento para operacoes longas (usado pela GUI com um
+     // thread de trabalho). Ambos sao opcionais (nullptr).
+     struct TransformControl {
+@@ -43,15 +31,10 @@ namespace core {
+     };
+ 
+     // ---------------------------------------------------------------------
+-    // 1-D (Eq. 4.4-6 e 4.4-7). Servem de referencia e para os testes.
++    // 1-D (Eq. 4.4-6). Serve de base para a transformada 2-D separavel e para
++    // os testes.
+     // ---------------------------------------------------------------------
+ 
+-    // DFT 1-D ingenua: F(u) = sum_x f(x) e^{-j 2 pi u x / M}. Qualquer tamanho.
+-    std::vector<Complex> dft1d(const std::vector<Complex>& f);
+-
+-    // IDFT 1-D ingenua: f(x) = (1/M) sum_u F(u) e^{+j 2 pi u x / M}.
+-    std::vector<Complex> idft1d(const std::vector<Complex>& F);
+-
+     // FFT 1-D radix-2 propria (Secao 4.11.3). Exige tamanho potencia de 2;
+     // para outros tamanhos retorna vetor vazio.
+     std::vector<Complex> fft1d(const std::vector<Complex>& f);
+@@ -67,19 +50,14 @@ namespace core {
+     // 1/MN fica na inversa (Eq. 4.5-16).
+     // ---------------------------------------------------------------------
+ 
+-    // Transformada direta 2-D no proprio lugar. Retorna false se cancelada
+-    // (control->cancel) ou se o algoritmo nao puder tratar o tamanho
+-    // (RadixFFT exige linhas e colunas potencia de 2; LibraryFFT exige a
+-    // biblioteca compilada). Nesses casos 'm' pode ficar em estado
+-    // indeterminado.
+-    bool forwardTransform2D(ComplexMatrix& m, TransformAlgorithm algo, TransformControl* control = nullptr);
+-
+-    // Transformada inversa 2-D no proprio lugar, usando UM unico algoritmo
+-    // direto (Secao 4.11.2):  f = conj( DFT{ conj(F) } ) / (M N).
+-    bool inverseTransform2D(ComplexMatrix& m, TransformAlgorithm algo, TransformControl* control = nullptr);
++    // Transformada direta 2-D no proprio lugar, pela FFT radix-2 propria
++    // (separabilidade: linhas e depois colunas). Retorna false se cancelada
++    // (control->cancel) ou se linhas/colunas nao forem potencia de 2; nesses
++    // casos 'm' pode ficar em estado indeterminado.
++    bool forwardTransform2D(ComplexMatrix& m, TransformControl* control = nullptr);
+ 
+-    // Estimativa de tempo (segundos) da DFT ingenua separavel P x Q, com base
+-    // numa calibracao rapida da maquina (feita uma vez). A GUI usa para avisar.
+-    double estimateNaiveSeconds(int P, int Q);
++    // Transformada inversa 2-D no proprio lugar, usando a mesma FFT direta
++    // (Secao 4.11.2):  f = conj( FFT{ conj(F) } ) / (M N).
++    bool inverseTransform2D(ComplexMatrix& m, TransformControl* control = nullptr);
+ 
+ }
+diff --git a/src/FrequencySession.cpp b/src/FrequencySession.cpp
+index 4ce9d6a..5f54361 100644
+--- a/src/FrequencySession.cpp
++++ b/src/FrequencySession.cpp
+@@ -5,8 +5,6 @@
+ namespace core {
+ 
+ namespace {
+-    constexpr double kPi = 3.14159265358979323846;
+-
+     inline double signXY(int x, int y) { return ((x + y) & 1) ? -1.0 : 1.0; }   // (-1)^(x+y)
+ 
+     inline uint8_t toByte(double v) {
+@@ -16,26 +14,15 @@ namespace {
+     }
+ }
+ 
+-PaddedSize computePaddedSize(int M, int N, TransformAlgorithm algo, bool usePadding) {
+-    PaddedSize s;
++TransformSize computeTransformSize(int M, int N) {
++    TransformSize s;
+     if (M <= 0 || N <= 0) return s;
+-    if (algo == TransformAlgorithm::RadixFFT) {
+-        // potencia de 2 (>= 2 para ser par)
+-        const int pm = usePadding ? 2 * M - 1 : M;
+-        const int pn = usePadding ? 2 * N - 1 : N;
+-        s.P = nextPowerOfTwo(std::max(2, pm));
+-        s.Q = nextPowerOfTwo(std::max(2, pn));
+-    } else if (usePadding) {
+-        s.P = 2 * M;
+-        s.Q = 2 * N;
+-    } else {
+-        s.P = M + (M & 1);
+-        s.Q = N + (N & 1);
+-    }
++    s.P = nextPowerOfTwo(std::max(2, M));
++    s.Q = nextPowerOfTwo(std::max(2, N));
+     return s;
+ }
+ 
+-bool FrequencySession::compute(Image& img, TransformAlgorithm algo, bool usePadding, TransformControl* control) {
++bool FrequencySession::compute(Image& img, TransformControl* control) {
+     hasF_ = false;
+     hasResult_ = false;
+     error_.clear();
+@@ -46,14 +33,10 @@ bool FrequencySession::compute(Image& img, TransformAlgorithm algo, bool usePadd
+         error_ = "Imagem vazia.";
+         return false;
+     }
+-    if (algo == TransformAlgorithm::LibraryFFT && !libraryFFTAvailable()) {
+-        error_ = "A FFT da biblioteca não foi compilada neste programa (pocketfft ausente).";
+-        return false;
+-    }
+-    const PaddedSize ps = computePaddedSize(M, N, algo, usePadding);
+-    if (static_cast<long long>(ps.P) * ps.Q > kMaxPaddedPixels) {
+-        error_ = "Imagem grande demais para a transformada (limite: 4096 x 4096 após o preenchimento). "
+-                 "Reduza a imagem (escala) ou desmarque o preenchimento.";
++    const TransformSize ps = computeTransformSize(M, N);
++    if (static_cast<long long>(ps.P) * ps.Q > kMaxTransformPixels) {
++        error_ = "Imagem grande demais para a transformada (limite: 4096 x 4096 na FFT radix-2). "
++                 "Reduza a imagem (escala).";
+         return false;
+     }
+ 
+@@ -61,10 +44,11 @@ bool FrequencySession::compute(Image& img, TransformAlgorithm algo, bool usePadd
+     maxIntensity_ = img.getMaxIntensity();
+     bits_ = img.getBitsPerPixel();
+     dpi_ = img.getDpi();
+-    algo_ = algo;
+ 
+-    // Passos 1-2: f_p (P x Q, zeros) com a imagem no canto superior esquerdo,
+-    // multiplicada por (-1)^(x+y) (centraliza a transformada: Eq. 4.6-8).
++    // Passos 1-2: a imagem e copiada direto para a matriz de entrada da FFT
++    // (canto superior esquerdo), ja multiplicada por (-1)^(x+y) (centraliza a
++    // transformada: Eq. 4.6-8). Sobram zeros nas bordas apenas quando M ou N
++    // nao sao potencias de 2 (exigencia da radix-2); se forem, P = M e Q = N.
+     F_ = ComplexMatrix(P_, Q_);
+     const auto& data = img.getData();
+     for (int x = 0; x < M; ++x) {
+@@ -74,11 +58,11 @@ bool FrequencySession::compute(Image& img, TransformAlgorithm algo, bool usePadd
+         }
+     }
+ 
+-    // Passo 3: DFT 2-D (uma unica vez; fica em cache).
+-    if (!forwardTransform2D(F_, algo, control)) {
++    // Passo 3: FFT 2-D radix-2 (uma unica vez; fica em cache).
++    if (!forwardTransform2D(F_, control)) {
+         F_ = ComplexMatrix();
+         error_ = (control && control->cancel.load()) ? "Operação cancelada."
+-                                                      : "O algoritmo escolhido não consegue tratar este tamanho.";
++                                                      : "A FFT radix-2 não consegue tratar este tamanho.";
+         return false;
+     }
+ 
+@@ -100,21 +84,13 @@ bool FrequencySession::compute(Image& img, TransformAlgorithm algo, bool usePadd
+     return true;
+ }
+ 
+-bool FrequencySession::filter(TransformAlgorithm algo, TransformControl* control) {
++bool FrequencySession::filter(TransformControl* control) {
+     hasResult_ = false;
+     error_.clear();
+     if (!hasF_) {
+         error_ = "Calcule a DFT antes de aplicar.";
+         return false;
+     }
+-    if (algo == TransformAlgorithm::LibraryFFT && !libraryFFTAvailable()) {
+-        error_ = "A FFT da biblioteca não foi compilada neste programa.";
+-        return false;
+-    }
+-    if (algo == TransformAlgorithm::RadixFFT && (!isPowerOfTwo(P_) || !isPowerOfTwo(Q_))) {
+-        error_ = "A FFT radix-2 exige P e Q potências de 2: recalcule a DFT com esse algoritmo.";
+-        return false;
+-    }
+ 
+     // Passo 5: G(u,v) = H(u,v) F(u,v) (produto elemento a elemento; preserva a fase).
+     ComplexMatrix G = F_;
+@@ -125,14 +101,16 @@ bool FrequencySession::filter(TransformAlgorithm algo, TransformControl* control
+         for (int c = 0; c < Q_; ++c) row[c] *= static_cast<double>(h[c]);
+     });
+ 
+-    // Passo 6: IDFT (um unico algoritmo direto, Secao 4.11.2).
+-    if (!inverseTransform2D(G, algo, control)) {
++    // Passo 6: IFFT (a mesma FFT direta, Secao 4.11.2).
++    if (!inverseTransform2D(G, control)) {
+         error_ = (control && control->cancel.load()) ? "Operação cancelada."
+                                                       : "Falha ao calcular a transformada inversa.";
+         return false;
+     }
+ 
+-    // Parte real x (-1)^(x+y), recorte [0:M, 0:N] (passos 6-7). Mede o
++    // Parte real x (-1)^(x+y) (passos 6-7). A IFFT devolve P x Q, com a
++    // imagem nas primeiras M linhas e N colunas: le-se essa regiao diretamente
++    // (nao ha recorte a partir de uma matriz expandida 2M x 2N). Mede o
+     // residuo imaginario na matriz inteira.
+     double maxRe = 0.0, maxIm = 0.0;
+     for (const Complex& v : G.data) {
+@@ -167,12 +145,6 @@ void FrequencySession::renderPixelRow(int r, int c0, int c1) {
+             case DisplayMode::OriginalSpectrum:
+                 v = 255.0 * std::log1p(std::abs(f[c])) / logMax_;
+                 break;
+-            case DisplayMode::MaskView:
+-                v = 255.0 * static_cast<double>(h[c]);
+-                break;
+-            case DisplayMode::Phase:
+-                v = (std::atan2(f[c].imag(), f[c].real()) + kPi) / (2.0 * kPi) * 255.0;
+-                break;
+         }
+         const uint8_t b = toByte(v);
+         out[0] = b; out[1] = b; out[2] = b; out[3] = 255;
+diff --git a/src/FrequencyTransform.cpp b/src/FrequencyTransform.cpp
+index 313628f..c6ca622 100644
+--- a/src/FrequencyTransform.cpp
++++ b/src/FrequencyTransform.cpp
+@@ -1,32 +1,15 @@
+ #include "FrequencyTransform.hpp"
+ #include <algorithm>
+-#include <chrono>
+ #include <cmath>
+ #include <functional>
+ #include <thread>
+ 
+-#ifdef HAVE_POCKETFFT
+-// Biblioteca de FFT (pocketfft, header-only). Usada SOMENTE no modo
+-// "FFT da biblioteca" e nos testes; as DFT/FFT proprias nao a utilizam.
+-#include "pocketfft_hdronly.hpp"
+-#endif
+-
+ namespace core {
+ 
+ namespace {
+ 
+     constexpr double kTwoPi = 6.283185307179586476925286766559;
+ 
+-    // Tabela tw[k] = e^{-j 2 pi k / n}, k = 0..n-1 (W_n^k do texto).
+-    std::vector<Complex> makeTwiddles(int n) {
+-        std::vector<Complex> tw(static_cast<size_t>(n));
+-        for (int k = 0; k < n; ++k) {
+-            const double ang = -kTwoPi * static_cast<double>(k) / static_cast<double>(n);
+-            tw[static_cast<size_t>(k)] = Complex(std::cos(ang), std::sin(ang));
+-        }
+-        return tw;
+-    }
+-
+     // Executa fn(i) para i = 0..n-1 em varios threads (agendamento dinamico).
+     template <class Fn>
+     void parallelFor(int n, Fn&& fn) {
+@@ -47,31 +30,6 @@ namespace {
+         for (auto& th : pool) th.join();
+     }
+ 
+-    // ---------------------------------------------------------------------
+-    // DFT 1-D "ingenua" (Eq. 4.4-6):  F(u) = sum_x f(x) W_M^{ux}.
+-    // O indice (u*x) mod M e obtido por soma incremental (idx += u; se
+-    // idx >= M, idx -= M): exato em inteiros, sem multiplicar nem usar '%'
+-    // dentro do laco interno, e a tabela de M entradas fica no cache.
+-    // Custo: O(M^2) por vetor.
+-    // ---------------------------------------------------------------------
+-    void naiveDft1d(const Complex* in, Complex* out, int n, const std::vector<Complex>& tw) {
+-        const double* a = reinterpret_cast<const double*>(in);
+-        const double* w = reinterpret_cast<const double*>(tw.data());
+-        for (int u = 0; u < n; ++u) {
+-            double sr = 0.0, si = 0.0;
+-            int idx = 0;
+-            for (int x = 0; x < n; ++x) {
+-                const double ar = a[2 * x], ai = a[2 * x + 1];
+-                const double wr = w[2 * idx], wi = w[2 * idx + 1];
+-                sr += ar * wr - ai * wi;
+-                si += ar * wi + ai * wr;
+-                idx += u;
+-                if (idx >= n) idx -= n;     // u < n: uma subtracao basta
+-            }
+-            out[u] = Complex(sr, si);
+-        }
+-    }
+-
+     // ---------------------------------------------------------------------
+     // FFT radix-2 iterativa (Secao 4.11.3, "duplicacao sucessiva").
+     // Para M = 2^n, K = M/2 e W_M = e^{-j2pi/M}:
+@@ -169,63 +127,25 @@ namespace {
+         return !cancelled.load();
+     }
+ 
+-    // Separabilidade (Secao 4.11.1): DFT 1-D em todas as linhas e depois em
++    // Separabilidade (Secao 4.11.1): FFT 1-D em todas as linhas e depois em
+     // todas as colunas do resultado. As colunas sao tratadas transpondo a
+     // matriz (acesso sequencial) e transpondo de volta.
+-    bool transform2DSeparable(ComplexMatrix& m, const std::function<void(Complex*, int)>& rowFnCols,
+-                              const std::function<void(Complex*, int)>& rowFnRows,
+-                              TransformControl* control) {
+-        // 1) linhas (comprimento = cols)
+-        if (!transformRows(m, rowFnCols, control, 0.00f, 0.45f)) return false;
+-        // 2) colunas: transpoe, transforma as linhas (comprimento = rows), transpoe de volta
+-        ComplexMatrix t;
+-        transposeBlocked(m, t);
+-        if (!transformRows(t, rowFnRows, control, 0.45f, 0.45f)) return false;
+-        transposeBlocked(t, m);
+-        if (control) control->progress.store(1.0f, std::memory_order_relaxed);
+-        return true;
+-    }
+-
+-    bool forwardNaive(ComplexMatrix& m, TransformControl* control) {
+-        const std::vector<Complex> twC = makeTwiddles(m.cols);
+-        const std::vector<Complex> twR = makeTwiddles(m.rows);
+-        auto makeFn = [](const std::vector<Complex>& tw) {
+-            return [&tw](Complex* row, int n) {
+-                thread_local std::vector<Complex> scratch;
+-                scratch.resize(static_cast<size_t>(n));
+-                naiveDft1d(row, scratch.data(), n, tw);
+-                std::copy(scratch.begin(), scratch.end(), row);
+-            };
+-        };
+-        return transform2DSeparable(m, makeFn(twC), makeFn(twR), control);
+-    }
+-
+     bool forwardRadix(ComplexMatrix& m, TransformControl* control) {
+         if (!isPowerOfTwo(m.rows) || !isPowerOfTwo(m.cols)) return false;
+         const FftPlan planC(m.cols);
+         const FftPlan planR(m.rows);
+-        auto makeFn = [](const FftPlan& plan) {
++        const auto rowFn = [](const FftPlan& plan) {
+             return [&plan](Complex* row, int) { fftRadix2InPlace(row, plan); };
+         };
+-        return transform2DSeparable(m, makeFn(planC), makeFn(planR), control);
+-    }
+-
+-    bool forwardLibrary(ComplexMatrix& m, TransformControl* control) {
+-#ifdef HAVE_POCKETFFT
+-        if (control) control->progress.store(0.1f, std::memory_order_relaxed);
+-        const pocketfft::shape_t shape{static_cast<size_t>(m.rows), static_cast<size_t>(m.cols)};
+-        const std::ptrdiff_t cs = static_cast<std::ptrdiff_t>(sizeof(Complex));
+-        const pocketfft::stride_t stride{static_cast<std::ptrdiff_t>(m.cols) * cs, cs};
+-        const pocketfft::shape_t axes{0, 1};
+-        pocketfft::c2c<double>(shape, stride, stride, axes, pocketfft::FORWARD,
+-                               m.data.data(), m.data.data(), 1.0);
++        // 1) linhas (comprimento = cols)
++        if (!transformRows(m, rowFn(planC), control, 0.00f, 0.45f)) return false;
++        // 2) colunas: transpoe, transforma as linhas (comprimento = rows), transpoe de volta
++        ComplexMatrix t;
++        transposeBlocked(m, t);
++        if (!transformRows(t, rowFn(planR), control, 0.45f, 0.45f)) return false;
++        transposeBlocked(t, m);
+         if (control) control->progress.store(1.0f, std::memory_order_relaxed);
+         return true;
+-#else
+-        (void)m;
+-        (void)control;
+-        return false;
+-#endif
+     }
+ 
+ }
+@@ -234,23 +154,6 @@ namespace {
+ // API publica
+ // ---------------------------------------------------------------------------
+ 
+-const char* algorithmName(TransformAlgorithm algo) {
+-    switch (algo) {
+-        case TransformAlgorithm::NaiveDFT:   return "DFT própria (ingênua separável)";
+-        case TransformAlgorithm::RadixFFT:   return "FFT própria (radix-2)";
+-        case TransformAlgorithm::LibraryFFT: return "FFT da biblioteca (pocketfft)";
+-    }
+-    return "?";
+-}
+-
+-bool libraryFFTAvailable() {
+-#ifdef HAVE_POCKETFFT
+-    return true;
+-#else
+-    return false;
+-#endif
+-}
+-
+ bool isPowerOfTwo(int n) {
+     return n > 0 && (n & (n - 1)) == 0;
+ }
+@@ -265,25 +168,6 @@ void parallelForEach(int n, const std::function<void(int)>& fn) {
+     parallelFor(n, fn);
+ }
+ 
+-std::vector<Complex> dft1d(const std::vector<Complex>& f) {
+-    const int n = static_cast<int>(f.size());
+-    std::vector<Complex> out(f.size());
+-    if (n == 0) return out;
+-    const std::vector<Complex> tw = makeTwiddles(n);
+-    naiveDft1d(f.data(), out.data(), n, tw);
+-    return out;
+-}
+-
+-std::vector<Complex> idft1d(const std::vector<Complex>& F) {
+-    // Eq. 4.4-7 via Secao 4.11.2: f = conj( DFT{ conj(F) } ) / M
+-    const int n = static_cast<int>(F.size());
+-    std::vector<Complex> c(F.size());
+-    for (size_t i = 0; i < F.size(); ++i) c[i] = std::conj(F[i]);
+-    std::vector<Complex> t = dft1d(c);
+-    for (auto& v : t) v = std::conj(v) / static_cast<double>(std::max(n, 1));
+-    return t;
+-}
+-
+ std::vector<Complex> fft1d(const std::vector<Complex>& f) {
+     const int n = static_cast<int>(f.size());
+     if (!isPowerOfTwo(n)) return {};
+@@ -293,22 +177,17 @@ std::vector<Complex> fft1d(const std::vector<Complex>& f) {
+     return out;
+ }
+ 
+-bool forwardTransform2D(ComplexMatrix& m, TransformAlgorithm algo, TransformControl* control) {
++bool forwardTransform2D(ComplexMatrix& m, TransformControl* control) {
+     if (m.rows <= 0 || m.cols <= 0 ||
+         m.data.size() != static_cast<size_t>(m.rows) * static_cast<size_t>(m.cols)) return false;
+     if (control) control->progress.store(0.0f, std::memory_order_relaxed);
+-    switch (algo) {
+-        case TransformAlgorithm::NaiveDFT:   return forwardNaive(m, control);
+-        case TransformAlgorithm::RadixFFT:   return forwardRadix(m, control);
+-        case TransformAlgorithm::LibraryFFT: return forwardLibrary(m, control);
+-    }
+-    return false;
++    return forwardRadix(m, control);
+ }
+ 
+-bool inverseTransform2D(ComplexMatrix& m, TransformAlgorithm algo, TransformControl* control) {
+-    // Secao 4.11.2:  f = conj( DFT{ conj(F) } ) / (M N)
++bool inverseTransform2D(ComplexMatrix& m, TransformControl* control) {
++    // Secao 4.11.2:  f = conj( FFT{ conj(F) } ) / (M N)
+     for (auto& v : m.data) v = std::conj(v);
+-    if (!forwardTransform2D(m, algo, control)) return false;
++    if (!forwardTransform2D(m, control)) return false;
+     const double inv = 1.0 / (static_cast<double>(m.rows) * static_cast<double>(m.cols));
+     parallelFor(m.rows, [&](int r) {
+         Complex* row = &m.data[static_cast<size_t>(r) * m.cols];
+@@ -317,27 +196,4 @@ bool inverseTransform2D(ComplexMatrix& m, TransformAlgorithm algo, TransformCont
+     return true;
+ }
+ 
+-double estimateNaiveSeconds(int P, int Q) {
+-    // Calibracao unica: taxa de multiplicacoes-acumulacoes complexas por
+-    // segundo de um unico thread, medida numa DFT 1-D pequena.
+-    static double macPerSecond = 0.0;
+-    if (macPerSecond <= 0.0) {
+-        const int n = 256, reps = 24;
+-        std::vector<Complex> in(static_cast<size_t>(n), Complex(1.0, 0.5));
+-        std::vector<Complex> out(static_cast<size_t>(n));
+-        const std::vector<Complex> tw = makeTwiddles(n);
+-        const auto t0 = std::chrono::steady_clock::now();
+-        for (int i = 0; i < reps; ++i) {
+-            naiveDft1d(in.data(), out.data(), n, tw);
+-            in[0] = out[1];   // evita que o compilador elimine o laco
+-        }
+-        const auto t1 = std::chrono::steady_clock::now();
+-        const double sec = std::max(1e-6, std::chrono::duration<double>(t1 - t0).count());
+-        macPerSecond = static_cast<double>(reps) * n * n / sec;
+-    }
+-    const double threads = std::max(1u, std::thread::hardware_concurrency());
+-    const double macs = static_cast<double>(P) * Q * (static_cast<double>(P) + Q);
+-    return macs / (macPerSecond * threads * 0.8);
+-}
+-
+ }
+diff --git a/tests/test_frequency.cpp b/tests/test_frequency.cpp
+index 16eae70..b10a5c7 100644
+--- a/tests/test_frequency.cpp
++++ b/tests/test_frequency.cpp
+@@ -40,6 +40,21 @@ namespace {
+         return F;
+     }
+ 
++    // Oraculo 1-D ingenuo (so para os testes): F(u) = sum f(x) e^{-j2pi ux/M}
++    std::vector<Complex> naiveDft1d(const std::vector<Complex>& f) {
++        const int n = static_cast<int>(f.size());
++        std::vector<Complex> F(f.size());
++        for (int u = 0; u < n; ++u) {
++            Complex s(0, 0);
++            for (int x = 0; x < n; ++x) {
++                const double ang = -2.0 * kPi * static_cast<double>(u) * x / n;
++                s += f[static_cast<size_t>(x)] * Complex(std::cos(ang), std::sin(ang));
++            }
++            F[static_cast<size_t>(u)] = s;
++        }
++        return F;
++    }
++
+     double relError(const ComplexMatrix& a, const ComplexMatrix& b) {
+         double num = 0, den = 0;
+         for (size_t i = 0; i < a.data.size(); ++i) {
+@@ -49,13 +64,6 @@ namespace {
+         return std::sqrt(num / std::max(den, 1e-300));
+     }
+ 
+-    std::vector<TransformAlgorithm> algorithmsFor(int rows, int cols) {
+-        std::vector<TransformAlgorithm> a{TransformAlgorithm::NaiveDFT};
+-        if (isPowerOfTwo(rows) && isPowerOfTwo(cols)) a.push_back(TransformAlgorithm::RadixFFT);
+-        if (libraryFFTAvailable()) a.push_back(TransformAlgorithm::LibraryFFT);
+-        return a;
+-    }
+-
+     Image randomImage(int rows, int cols, unsigned seed) {
+         std::mt19937 g(seed);
+         Image img(rows, cols);
+@@ -80,100 +88,81 @@ namespace {
+ 
+ }
+ 
+-// 1. Exemplos do livro (Exemplo 4.4)
+-TEST(dft_1d_exemplos_do_livro) {
+-    auto F = dft1d({1, 2, 4, 4});
+-    CHECK_NEAR(F[0].real(), 11, 1e-12);                                  CHECK_NEAR(F[0].imag(), 0, 1e-12);
+-    CHECK_NEAR(F[1].real(), -3, 1e-12);                                  CHECK_NEAR(F[1].imag(), 2, 1e-12);
+-    CHECK_NEAR(F[2].real(), -1, 1e-12);                                  CHECK_NEAR(F[2].imag(), 0, 1e-12);
+-    CHECK_NEAR(F[3].real(), -3, 1e-12);                                  CHECK_NEAR(F[3].imag(), -2, 1e-12);
++// 1. Exemplos do livro (Exemplo 4.4) com a FFT propria
++TEST(fft_1d_exemplos_do_livro) {
++    auto F = fft1d({1, 2, 4, 4});
++    CHECK_NEAR(F[0].real(), 11, 1e-12);  CHECK_NEAR(F[0].imag(), 0, 1e-12);
++    CHECK_NEAR(F[1].real(), -3, 1e-12);  CHECK_NEAR(F[1].imag(), 2, 1e-12);
++    CHECK_NEAR(F[2].real(), -1, 1e-12);  CHECK_NEAR(F[2].imag(), 0, 1e-12);
++    CHECK_NEAR(F[3].real(), -3, 1e-12);  CHECK_NEAR(F[3].imag(), -2, 1e-12);
+ 
+-    auto G = dft1d({1, 2, 3, 4});
++    auto G = fft1d({1, 2, 3, 4});
+     CHECK_NEAR(G[0].real(), 10, 1e-12);
+     CHECK_NEAR(G[1].real(), -2, 1e-12);  CHECK_NEAR(G[1].imag(), 2, 1e-12);
+     CHECK_NEAR(G[2].real(), -2, 1e-12);
+     CHECK_NEAR(G[3].real(), -2, 1e-12);  CHECK_NEAR(G[3].imag(), -2, 1e-12);
+ 
+-    // a FFT propria produz o mesmo
+-    auto Ff = fft1d({1, 2, 4, 4});
+-    for (int i = 0; i < 4; ++i) CHECK_NEAR(std::abs(Ff[i] - F[i]), 0.0, 1e-12);
+-
+-    // inversa
+-    auto back = idft1d(F);
+-    CHECK_NEAR(back[0].real(), 1, 1e-12);
+-    CHECK_NEAR(back[2].real(), 4, 1e-12);
+-
+     CHECK(fft1d({1, 2, 3}).empty());     // nao e potencia de 2
+ }
+ 
+-// 2. Todos os algoritmos contra o oraculo de forca bruta (tamanhos variados, nao quadrados)
+-TEST(dft_2d_contra_oraculo) {
+-    const int sizes[][2] = {{8, 8}, {4, 16}, {16, 4}, {6, 10}, {9, 7}, {1, 8}, {8, 1}, {5, 5}, {32, 8}};
+-    for (auto& s : sizes) {
+-        ComplexMatrix f = randomMatrix(s[0], s[1], 100 + s[0] * 31 + s[1]);
+-        ComplexMatrix ref = bruteForceDft2d(f);
+-        for (TransformAlgorithm a : algorithmsFor(s[0], s[1])) {
+-            ComplexMatrix m = f;
+-            CHECK(forwardTransform2D(m, a));
+-            CHECK(relError(m, ref) < 1e-9);
+-        }
++TEST(fft_1d_contra_oraculo) {
++    for (int n : {1, 2, 8, 64}) {
++        std::vector<Complex> f(static_cast<size_t>(n));
++        for (int i = 0; i < n; ++i) f[static_cast<size_t>(i)] = Complex(std::sin(i * 1.3) * 50, std::cos(i * 0.7) * 20);
++        auto a = fft1d(f), b = naiveDft1d(f);
++        for (int i = 0; i < n; ++i) CHECK_NEAR(std::abs(a[static_cast<size_t>(i)] - b[static_cast<size_t>(i)]), 0.0, 1e-9);
+     }
+ }
+ 
+-TEST(algoritmos_concordam_em_tamanho_maior) {
+-    ComplexMatrix f = randomMatrix(64, 128, 7);
+-    ComplexMatrix a = f, b = f;
+-    CHECK(forwardTransform2D(a, TransformAlgorithm::NaiveDFT));
+-    CHECK(forwardTransform2D(b, TransformAlgorithm::RadixFFT));
+-    CHECK(relError(a, b) < 1e-9);
+-    if (libraryFFTAvailable()) {
+-        ComplexMatrix c = f;
+-        CHECK(forwardTransform2D(c, TransformAlgorithm::LibraryFFT));
+-        CHECK(relError(c, b) < 1e-9);
++// 2. FFT 2-D contra o oraculo de forca bruta (potencias de 2, nao quadrados)
++TEST(fft_2d_contra_oraculo) {
++    const int sizes[][2] = {{8, 8}, {4, 16}, {16, 4}, {1, 8}, {8, 1}, {32, 8}};
++    for (auto& s : sizes) {
++        ComplexMatrix f = randomMatrix(s[0], s[1], 100 + s[0] * 31 + s[1]);
++        ComplexMatrix ref = bruteForceDft2d(f);
++        ComplexMatrix m = f;
++        CHECK(forwardTransform2D(m));
++        CHECK(relError(m, ref) < 1e-9);
+     }
+ }
+ 
+ TEST(radix2_recusa_tamanho_invalido) {
+     ComplexMatrix m = randomMatrix(6, 8, 1);
+-    CHECK(!forwardTransform2D(m, TransformAlgorithm::RadixFFT));
++    CHECK(!forwardTransform2D(m));
+ }
+ 
+-// 3. IDFT(DFT(f)) == f
++// 3. IFFT(FFT(f)) == f
+ TEST(inversa_recupera_a_imagem) {
+-    const int sizes[][2] = {{16, 16}, {8, 32}, {12, 10}};
++    const int sizes[][2] = {{16, 16}, {8, 32}, {2, 64}};
+     for (auto& s : sizes) {
+         ComplexMatrix f = randomMatrix(s[0], s[1], 3);
+-        for (TransformAlgorithm a : algorithmsFor(s[0], s[1])) {
+-            ComplexMatrix m = f;
+-            CHECK(forwardTransform2D(m, a));
+-            CHECK(inverseTransform2D(m, a));
+-            CHECK(relError(m, f) < 1e-9);
+-        }
++        ComplexMatrix m = f;
++        CHECK(forwardTransform2D(m));
++        CHECK(inverseTransform2D(m));
++        CHECK(relError(m, f) < 1e-9);
+     }
+ }
+ 
+ // 4. F(0,0) = M N media(f)
+ TEST(termo_dc) {
+-    ComplexMatrix f = randomMatrix(12, 20, 4);
++    ComplexMatrix f = randomMatrix(16, 32, 4);
+     double sum = 0;
+     for (auto& v : f.data) sum += v.real();
+     const double mean = sum / f.data.size();
+-    for (TransformAlgorithm a : algorithmsFor(12, 20)) {
+-        ComplexMatrix m = f;
+-        forwardTransform2D(m, a);
+-        CHECK_NEAR(m.at(0, 0).real(), 12.0 * 20.0 * mean, 1e-8);
+-        CHECK_NEAR(m.at(0, 0).imag(), 0.0, 1e-8);
+-    }
++    ComplexMatrix m = f;
++    forwardTransform2D(m);
++    CHECK_NEAR(m.at(0, 0).real(), 16.0 * 32.0 * mean, 1e-8);
++    CHECK_NEAR(m.at(0, 0).imag(), 0.0, 1e-8);
+ }
+ 
+ // 5. Simetria conjugada
+ TEST(simetria_conjugada) {
+-    ComplexMatrix m = randomMatrix(16, 24, 5);
+-    forwardTransform2D(m, TransformAlgorithm::NaiveDFT);
++    ComplexMatrix m = randomMatrix(16, 32, 5);
++    forwardTransform2D(m);
+     double maxErr = 0;
+     for (int u = 0; u < 16; ++u)
+-        for (int v = 0; v < 24; ++v)
+-            maxErr = std::max(maxErr, std::abs(m.at((16 - u) % 16, (24 - v) % 24) - std::conj(m.at(u, v))));
++        for (int v = 0; v < 32; ++v)
++            maxErr = std::max(maxErr, std::abs(m.at((16 - u) % 16, (32 - v) % 32) - std::conj(m.at(u, v))));
+     CHECK(maxErr < 1e-8);
+ }
+ 
+@@ -183,72 +172,42 @@ TEST(translacao_nao_altera_magnitude) {
+     ComplexMatrix g(16, 16);
+     for (int x = 0; x < 16; ++x)
+         for (int y = 0; y < 16; ++y) g.at((x + 3) % 16, (y + 5) % 16) = f.at(x, y);
+-    forwardTransform2D(f, TransformAlgorithm::RadixFFT);
+-    forwardTransform2D(g, TransformAlgorithm::RadixFFT);
++    forwardTransform2D(f);
++    forwardTransform2D(g);
+     double maxErr = 0;
+     for (size_t i = 0; i < f.data.size(); ++i)
+         maxErr = std::max(maxErr, std::fabs(std::abs(f.data[i]) - std::abs(g.data[i])));
+     CHECK(maxErr < 1e-8);
+ }
+ 
+-// Preenchimento (Secao 4.6)
+-TEST(tamanhos_de_preenchimento) {
+-    PaddedSize s = computePaddedSize(30, 50, TransformAlgorithm::NaiveDFT, true);
+-    CHECK(s.P == 60 && s.Q == 100);
+-    s = computePaddedSize(30, 50, TransformAlgorithm::LibraryFFT, true);
+-    CHECK(s.P == 60 && s.Q == 100);
+-    s = computePaddedSize(30, 50, TransformAlgorithm::RadixFFT, true);       // >= 2M-1 = 59, 99
+-    CHECK(s.P == 64 && s.Q == 128);
+-    s = computePaddedSize(32, 64, TransformAlgorithm::RadixFFT, true);       // >= 63, 127
+-    CHECK(s.P == 64 && s.Q == 128);
+-    s = computePaddedSize(31, 51, TransformAlgorithm::NaiveDFT, false);      // sem preench.: par
+-    CHECK(s.P == 32 && s.Q == 52);
+-    s = computePaddedSize(30, 50, TransformAlgorithm::RadixFFT, false);
++// Dimensoes P x Q: sem preenchimento (so arredonda para a proxima potencia de 2)
++TEST(tamanhos_sem_preenchimento) {
++    TransformSize s = computeTransformSize(720, 1280);
++    CHECK(s.P == 1024 && s.Q == 2048);
++    s = computeTransformSize(30, 50);
++    CHECK(s.P == 32 && s.Q == 64);
++    s = computeTransformSize(32, 64);            // ja potencias de 2: P = M, Q = N
+     CHECK(s.P == 32 && s.Q == 64);
+-    s = computePaddedSize(1, 1, TransformAlgorithm::RadixFFT, true);
++    s = computeTransformSize(1, 1);
+     CHECK(s.P == 2 && s.Q == 2);
+ }
+ 
+-// 7. H = 1 devolve a imagem de entrada (apos o recorte), para todos os algoritmos e com/sem preenchimento
++// 7. H = 1 devolve a imagem de entrada (tamanhos potencia de 2 e nao potencia de 2)
+ TEST(filtro_identidade_devolve_a_imagem) {
+-    Image img = randomImage(21, 30, 8);
+-    for (TransformAlgorithm a : {TransformAlgorithm::NaiveDFT, TransformAlgorithm::RadixFFT, TransformAlgorithm::LibraryFFT}) {
+-        if (a == TransformAlgorithm::LibraryFFT && !libraryFFTAvailable()) continue;
+-        for (bool pad : {true, false}) {
+-            FrequencySession s;
+-            CHECK(s.compute(img, a, pad));
+-            CHECK(s.filter(a));
+-            double maxErr = 0;
+-            for (int x = 0; x < 21; ++x)
+-                for (int y = 0; y < 30; ++y)
+-                    maxErr = std::max(maxErr, std::fabs(s.resultRaw()[static_cast<size_t>(x) * 30 + y] - img.pixel(x, y)));
+-            CHECK(maxErr < 1e-8);
+-            Image out = s.resultImage(OutputNormalization::Clip);
+-            CHECK(out.getData() == img.getData());
+-        }
+-    }
+-}
+-
+-TEST(sessao_algoritmos_dao_o_mesmo_filtrado) {
+-    // 32 x 32 com preenchimento => P = Q = 64 em TODOS os algoritmos, entao o
+-    // mesmo filtro H vale para todos e os resultados devem coincidir.
+-    Image img = testScene(32, 32);
+-    FilterParams p;
+-    p.kind = FilterKind::LowPass; p.shape = FilterShape::Gaussian; p.d0 = 6.0;
+-    std::vector<std::vector<double>> results;
+-    for (TransformAlgorithm a : {TransformAlgorithm::NaiveDFT, TransformAlgorithm::RadixFFT, TransformAlgorithm::LibraryFFT}) {
+-        if (a == TransformAlgorithm::LibraryFFT && !libraryFFTAvailable()) continue;
++    const int sizes[][2] = {{21, 30}, {32, 64}, {17, 5}};
++    for (auto& sz : sizes) {
++        Image img = randomImage(sz[0], sz[1], 8);
+         FrequencySession s;
+-        CHECK(s.compute(img, a, true));
+-        CHECK(s.P() == 64 && s.Q() == 64);
+-        s.mask().multiplyBy(makeFilter(s.P(), s.Q(), p));
+-        CHECK(s.filter(a));
+-        results.push_back(s.resultRaw());
+-    }
+-    for (size_t k = 1; k < results.size(); ++k) {
++        CHECK(s.compute(img));
++        CHECK(s.filter());
+         double maxErr = 0;
+-        for (size_t i = 0; i < results[0].size(); ++i) maxErr = std::max(maxErr, std::fabs(results[0][i] - results[k][i]));
++        for (int x = 0; x < sz[0]; ++x)
++            for (int y = 0; y < sz[1]; ++y)
++                maxErr = std::max(maxErr, std::fabs(s.resultRaw()[static_cast<size_t>(x) * sz[1] + y] - img.pixel(x, y)));
+         CHECK(maxErr < 1e-8);
++        Image out = s.resultImage(OutputNormalization::Clip);
++        CHECK(out.getRows() == sz[0] && out.getCols() == sz[1]);
++        CHECK(out.getData() == img.getData());
+     }
+ }
+ 
+@@ -256,7 +215,7 @@ TEST(sessao_algoritmos_dao_o_mesmo_filtrado) {
+ TEST(pincelada_simetrica_mantem_resultado_real) {
+     Image img = testScene(30, 40);
+     FrequencySession s;
+-    CHECK(s.compute(img, TransformAlgorithm::RadixFFT, true));
++    CHECK(s.compute(img));
+     const int P = s.P(), Q = s.Q();
+ 
+     Brush b;
+@@ -279,7 +238,7 @@ TEST(pincelada_simetrica_mantem_resultado_real) {
+     CHECK(exact);
+     CHECK(changed);
+ 
+-    CHECK(s.filter(TransformAlgorithm::RadixFFT));
++    CHECK(s.filter());
+     CHECK(s.residualImag() < 1e-8);
+ }
+ 
+@@ -355,7 +314,7 @@ TEST(desfazer_refazer_restauram_a_mascara) {
+ 
+ // 9. Passa-baixa gaussiano borra; passa-alta realca bordas
+ TEST(passa_baixa_borra_e_passa_alta_realca) {
+-    Image img = testScene(48, 48);
++    Image img = testScene(64, 64);
+ 
+     auto energyHighFreq = [](const std::vector<double>& g, int M, int N) {
+         // energia de alta frequencia ~ soma dos quadrados das diferencas entre vizinhos
+@@ -367,18 +326,18 @@ TEST(passa_baixa_borra_e_passa_alta_realca) {
+             }
+         return e;
+     };
+-    std::vector<double> orig(48 * 48);
+-    for (int x = 0; x < 48; ++x) for (int y = 0; y < 48; ++y) orig[static_cast<size_t>(x) * 48 + y] = img.pixel(x, y);
+-    const double e0 = energyHighFreq(orig, 48, 48);
++    std::vector<double> orig(64 * 64);
++    for (int x = 0; x < 64; ++x) for (int y = 0; y < 64; ++y) orig[static_cast<size_t>(x) * 64 + y] = img.pixel(x, y);
++    const double e0 = energyHighFreq(orig, 64, 64);
+ 
+     double eLow = 0, eHigh = 0;
+     for (FilterKind k : {FilterKind::LowPass, FilterKind::HighPass}) {
+         FrequencySession s;
+-        CHECK(s.compute(img, TransformAlgorithm::RadixFFT, true));
++        CHECK(s.compute(img));
+         FilterParams p; p.kind = k; p.shape = FilterShape::Gaussian; p.d0 = 6.0;
+         s.mask().multiplyBy(makeFilter(s.P(), s.Q(), p));
+-        CHECK(s.filter(TransformAlgorithm::RadixFFT));
+-        const double e = energyHighFreq(s.resultRaw(), 48, 48);
++        CHECK(s.filter());
++        const double e = energyHighFreq(s.resultRaw(), 64, 64);
+         (k == FilterKind::LowPass ? eLow : eHigh) = e;
+     }
+     CHECK(eLow < 0.30 * e0);     // passa-baixa: borrou (perdeu energia de alta frequencia)
+@@ -470,10 +429,10 @@ TEST(notch_remove_padrao_periodico_moire) {
+     const double before = mse(clean, noisyRaw);
+ 
+     FrequencySession s;
+-    CHECK(s.compute(noisy, TransformAlgorithm::RadixFFT, false));   // P = Q = 64: a senoide cai exatamente em (6,10)
++    CHECK(s.compute(noisy));   // P = Q = 64: a senoide cai exatamente em (6,10)
+     const double scale = s.P() / static_cast<double>(M);
+     s.mask().multiplyBy(makeNotchRejectAt(s.P(), s.Q(), s.P() / 2.0 + 6 * scale, s.Q() / 2.0 + 10 * scale, 2.5, 2, FilterShape::Gaussian));
+-    CHECK(s.filter(TransformAlgorithm::RadixFFT));
++    CHECK(s.filter());
+     const double after = mse(clean, s.resultRaw());
+     CHECK(after < 0.1 * before);
+ }
+@@ -481,23 +440,23 @@ TEST(notch_remove_padrao_periodico_moire) {
+ TEST(sessao_validacoes) {
+     Image empty(0, 0);
+     FrequencySession s;
+-    CHECK(!s.compute(empty, TransformAlgorithm::RadixFFT, true));
+-    CHECK(!s.filter(TransformAlgorithm::RadixFFT));          // sem DFT calculada
++    CHECK(!s.compute(empty));
++    CHECK(!s.filter());                       // sem FFT calculada
+     Image img = randomImage(10, 10, 1);
+-    CHECK(s.compute(img, TransformAlgorithm::NaiveDFT, true));
+-    CHECK(!s.filter(TransformAlgorithm::RadixFFT));          // P=20 nao e potencia de 2
++    CHECK(s.compute(img));
++    CHECK(s.P() == 16 && s.Q() == 16);
+     // cancelamento
+     TransformControl ctl;
+     ctl.cancel = true;
+     FrequencySession s2;
+-    CHECK(!s2.compute(img, TransformAlgorithm::NaiveDFT, true, &ctl));
++    CHECK(!s2.compute(img, &ctl));
+     CHECK(!s2.hasTransform());
+ }
+ 
+ TEST(espectro_normalizacao_e_exibicao) {
+     Image img = testScene(16, 16);
+     FrequencySession s;
+-    CHECK(s.compute(img, TransformAlgorithm::RadixFFT, false));     // sem preenchimento: P = M, Q = N
++    CHECK(s.compute(img));     // 16 x 16 ja e potencia de 2: P = M, Q = N
+     // o termo DC (centro) e o maximo: 255 no espectro original
+     s.setDisplayMode(DisplayMode::OriginalSpectrum);
+     s.renderAll();
+@@ -509,7 +468,7 @@ TEST(espectro_normalizacao_e_exibicao) {
+     s.setDisplayMode(DisplayMode::FilteredSpectrum);
+     s.renderAll();
+     CHECK(s.displayRGBA()[(static_cast<size_t>(c) * s.Q() + d) * 4] == 0);
+-    CHECK(s.filter(TransformAlgorithm::RadixFFT));
++    CHECK(s.filter());
+     // F(0,0)=0 => media nula; resultado normalizado min-max fica em [0, 255]
+     double mean = 0; for (double v : s.resultRaw()) mean += v; mean /= s.resultRaw().size();
+     CHECK(std::fabs(mean) < 1e-8);
+diff --git a/ui/FrequencyWindow.cpp b/ui/FrequencyWindow.cpp
+index fe3133a..a67384e 100644
+--- a/ui/FrequencyWindow.cpp
++++ b/ui/FrequencyWindow.cpp
+@@ -3,7 +3,6 @@
+ #include "RgbaTexture.hpp"
+ #include "ImageColor.hpp"
+ #include "FrequencySession.hpp"
+-#include "FrequencyFilters.hpp"
+ #include "imgui.h"
+ #include <algorithm>
+ #include <atomic>
+@@ -21,7 +20,7 @@ namespace ui {
+ namespace {
+ 
+     // ---------------------------------------------------------------------
+-    // Trabalho em segundo plano (DFT e IDFT podem demorar): a GUI nao congela,
++    // Trabalho em segundo plano (FFT e IFFT podem demorar): a GUI nao congela,
+     // mostra progresso e permite cancelar. Enquanto o worker roda, a sessao
+     // NAO e tocada pela interface.
+     // ---------------------------------------------------------------------
+@@ -52,15 +51,11 @@ namespace {
+         core::FrequencySession session;
+         Worker worker;
+ 
+-        // transformada
+-        int algo = 1;                       // indice: 0 DFT propria | 1 FFT propria | 2 biblioteca
+-        bool padding = true;
++        // transformada (FFT radix-2 propria, sem preenchimento)
+         int normalization = 0;              // 0: min-max | 1: recortar
+-        int displayMode = 0;                // 0 espectro filtrado | 1 original | 2 mascara | 3 fase
+-        bool confirmSlowDft = false;
++        int displayMode = 0;                // 0 espectro filtrado | 1 original
+ 
+-        // ferramentas
+-        int tool = 0;                       // 0: pincel | 1: notch por clique
++        // pincel
+         int brushColor = 0;                 // 0 preto | 1 branco | 2 cinza
+         int gray = 128;
+         bool hardDisc = false;
+@@ -71,23 +66,13 @@ namespace {
+         bool painting = false;
+         ImVec2 lastPos{0, 0};
+ 
+-        // filtros pre-definidos
+-        int presetKind = 0;
+-        int presetShape = 2;
+-        float presetD0 = 30.0f;
+-        int presetOrder = 2;
+-        float presetWidth = 10.0f;
+-        std::vector<core::Notch> notches;
+-        float notchClickD0 = 6.0f;
+-        int notchClickShape = 1;            // Butterworth
+-
+         // resultado / texturas
+-        core::Image result{0, 0};
++        core::Image result{0, 0};           // plano I filtrado (cinza, M x N)
+         bool hasResult = false;
+         unsigned int spectrumTexture = 0;
+         int dispRows = 0, dispCols = 0;     // P x Q do espectro exibido (valido mesmo com o worker rodando)
+         unsigned int resultTexture = 0;
+-        int computedRevision = -1;          // imageRevision da entrada da DFT
++        int computedRevision = -1;          // imageRevision da entrada da FFT
+         std::string info;
+         std::string error;
+         double dftMs = 0.0, idftMs = 0.0;
+@@ -100,19 +85,6 @@ namespace {
+         return s;
+     }
+ 
+-    const core::TransformAlgorithm kAlgos[3] = {
+-        core::TransformAlgorithm::NaiveDFT,
+-        core::TransformAlgorithm::RadixFFT,
+-        core::TransformAlgorithm::LibraryFFT};
+-
+-    const core::FilterKind kKinds[6] = {
+-        core::FilterKind::LowPass, core::FilterKind::HighPass,
+-        core::FilterKind::BandReject, core::FilterKind::BandPass,
+-        core::FilterKind::NotchReject, core::FilterKind::NotchPass};
+-
+-    const core::FilterShape kShapes[3] = {
+-        core::FilterShape::Ideal, core::FilterShape::Butterworth, core::FilterShape::Gaussian};
+-
+     void Tooltip(const char* text) {
+         if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", text);
+     }
+@@ -203,13 +175,11 @@ namespace {
+         w.control.progress = 0.0f;
+         w.ok = false;
+         w.running = true;
+-        const core::TransformAlgorithm algo = kAlgos[f.algo];
+-        const bool pad = f.padding;
+         f.computedRevision = state.imageRevision;
+         f.error.clear();
+-        w.thread = std::thread([&f, algo, pad]() {
++        w.thread = std::thread([&f]() {
+             const auto t0 = std::chrono::steady_clock::now();
+-            f.worker.ok = f.session.compute(f.worker.input, algo, pad, &f.worker.control);
++            f.worker.ok = f.session.compute(f.worker.input, &f.worker.control);
+             f.worker.ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+             f.worker.running = false;
+         });
+@@ -227,18 +197,30 @@ namespace {
+         f.error.clear();
+         w.thread = std::thread([&f]() {
+             const auto t0 = std::chrono::steady_clock::now();
+-            // mesmo algoritmo com que a DFT foi calculada (P e Q compativeis)
+-            f.worker.ok = f.session.filter(f.session.algorithm(), &f.worker.control);
++            f.worker.ok = f.session.filter(&f.worker.control);
+             f.worker.ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+             f.worker.running = false;
+         });
+     }
+ 
+-    void ShowResult(FreqUi& f) {
++    // Previa COLORIDA do resultado: a filtragem e feita sobre o plano I (HSI);
++    // aqui o plano I filtrado substitui o I da imagem de trabalho (H e S sao
++    // preservados), exatamente como em "Usar resultado como imagem de trabalho".
++    // Em imagem cinza (R = G = B) o resultado continua cinza.
++    core::ColorImage MakeColorResult(AppState& state, core::Image& filteredIntensity) {
++        core::ColorImage color = state.workingImage;     // copia: a imagem de trabalho nao e tocada
++        if (filteredIntensity.getRows() != color.getRows() || filteredIntensity.getCols() != color.getCols())
++            return core::ColorImage(filteredIntensity);  // tamanho diferente: so exibe em cinza
++        core::applyToPlanes(color, core::ColorTarget::IntensityHSI,
++                            [&](core::Image& intensity) { intensity = filteredIntensity; });
++        return color;
++    }
++
++    void ShowResult(AppState& state, FreqUi& f) {
+         if (!f.session.hasResult()) return;
+         f.result = f.session.resultImage(f.normalization == 0 ? core::OutputNormalization::MinMax
+                                                               : core::OutputNormalization::Clip);
+-        core::ColorImage resultView(f.result);        // cinza -> R = G = B, so para exibir
++        core::ColorImage resultView = MakeColorResult(state, f.result);
+         f.resultTexture = UploadImageToTexture(resultView, f.resultTexture);
+         f.hasResult = true;
+     }
+@@ -254,42 +236,30 @@ namespace {
+                 f.hasResult = false;
+                 f.session.setDisplayMode(static_cast<core::DisplayMode>(f.displayMode));
+                 RefreshSpectrumFull(f);
+-                std::snprintf(buf, sizeof(buf), "DFT calculada (%s): %d x %d -> %d x %d em %.0f ms.",
+-                              core::algorithmName(f.session.algorithm()), f.session.M(), f.session.N(),
+-                              f.session.P(), f.session.Q(), w.ms);
++                std::snprintf(buf, sizeof(buf), "FFT calculada: %d x %d -> %d x %d em %.0f ms.",
++                              f.session.M(), f.session.N(), f.session.P(), f.session.Q(), w.ms);
+                 f.info = buf;
+                 state.statusMessage = f.info;
+             } else {
+                 f.error = f.session.lastError();
+-                state.statusMessage = "DFT: " + f.error;
++                state.statusMessage = "FFT: " + f.error;
+             }
+         } else if (w.kind == Worker::Kind::Inverse) {
+             if (w.ok) {
+                 f.idftMs = w.ms;
+-                ShowResult(f);
+-                std::snprintf(buf, sizeof(buf), "Filtragem aplicada (IDFT) em %.0f ms; max|Im|/max|Re| = %.2e.",
++                ShowResult(state, f);
++                std::snprintf(buf, sizeof(buf), "Filtragem aplicada (IFFT) em %.0f ms; max|Im|/max|Re| = %.2e.",
+                               w.ms, f.session.residualImag());
+                 f.info = buf;
+                 state.statusMessage = f.info;
+             } else {
+                 f.error = f.session.lastError();
+-                state.statusMessage = "IDFT: " + f.error;
++                state.statusMessage = "IFFT: " + f.error;
+             }
+         }
+         w.kind = Worker::Kind::None;
+     }
+ 
+-    core::FilterParams PresetParams(const FreqUi& f) {
+-        core::FilterParams p;
+-        p.kind = kKinds[f.presetKind];
+-        p.shape = kShapes[f.presetShape];
+-        p.d0 = f.presetD0;
+-        p.order = f.presetOrder;
+-        p.width = f.presetWidth;
+-        p.notches = f.notches;
+-        return p;
+-    }
+-
+     core::Brush CurrentBrush(const FreqUi& f) {
+         core::Brush b;
+         b.radius = f.radius;
+@@ -300,11 +270,6 @@ namespace {
+         return b;
+     }
+ 
+-    bool LiveAllowed(const FreqUi& f) {
+-        const long long pq = static_cast<long long>(f.session.P()) * f.session.Q();
+-        return f.session.algorithm() != core::TransformAlgorithm::NaiveDFT || pq <= 128LL * 128LL;
+-    }
+-
+ }
+ 
+ void RenderFrequencyWindow(AppState& state) {
+@@ -341,86 +306,29 @@ void RenderFrequencyWindow(AppState& state) {
+     ImGui::TextDisabled("Imagem colorida: o espectro é da intensidade I = (R+G+B)/3.");
+     Tooltip("Ao usar o resultado, só o plano I (HSI) é substituído:\n"
+             "matiz e saturação da imagem de trabalho são preservados.");
+-    ImGui::BeginDisabled(busy);
+-
+-    ImGui::Text("Algoritmo da transformada");
+-    ImGui::SetNextItemWidth(-1);
+-    if (ImGui::BeginCombo("##algo", core::algorithmName(kAlgos[f.algo]))) {
+-        for (int i = 0; i < 3; ++i) {
+-            const bool unavailable = (i == 2 && !core::libraryFFTAvailable());
+-            std::string label = core::algorithmName(kAlgos[i]);
+-            if (unavailable) label += " [não compilada]";
+-            if (ImGui::Selectable(label.c_str(), f.algo == i,
+-                                  unavailable ? ImGuiSelectableFlags_Disabled : ImGuiSelectableFlags_None)) {
+-                f.algo = i;
+-            }
+-        }
+-        ImGui::EndCombo();
+-    }
+-    Tooltip("DFT própria: separável O(MN(M+N)) — lenta em imagens grandes.\n"
+-            "FFT própria: radix-2, O(MN log MN) — exige P e Q potências de 2.\n"
+-            "FFT da biblioteca: pocketfft — alternativa para imagens grandes.\n"
+-            "Todas dão o mesmo resultado (erro relativo < 1e-9).");
+-
+-    ImGui::Checkbox("Usar preenchimento (recomendado)", &f.padding);
+-    Tooltip("Preenche com zeros até P x Q (P >= 2M-1, Q >= 2N-1) para evitar o erro de\n"
+-            "wraparound da convolução circular. Desmarcado: P = M, Q = N (mais rápido,\n"
+-            "com wraparound; arredondado para par / potência de 2).");
++    ImGui::TextDisabled("Algoritmo: FFT própria (radix-2), sem preenchimento.");
++    Tooltip("FFT radix-2 (duplicação sucessiva), O(MN log MN). P e Q são a menor potência\n"
++            "de 2 >= M e >= N (a FFT radix-2 exige potências de 2); a imagem é copiada\n"
++            "direto para a matriz de entrada, sem dobrar o tamanho (2M-1 x 2N-1).");
+ 
+-    const core::PaddedSize ps = core::computePaddedSize(M, N, kAlgos[f.algo], f.padding);
++    const core::TransformSize ps = core::computeTransformSize(M, N);
+     const long long pq = static_cast<long long>(ps.P) * ps.Q;
+     ImGui::Text("Imagem M x N: %d x %d", M, N);
+     ImGui::Text("Transformada P x Q: %d x %d", ps.P, ps.Q);
+ 
+-    const bool tooBig = pq > core::kMaxPaddedPixels;
+-    const bool naive = (f.algo == 0);
+-    const bool slowNaive = naive && pq > 512LL * 512LL;
++    const bool tooBig = pq > core::kMaxTransformPixels;
+     if (tooBig) {
+         ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.3f, 1.0f),
+-                           "P x Q acima do limite (4096 x 4096). Reduza a imagem ou desmarque o preenchimento.");
+-    } else if (naive) {
+-        const double est = core::estimateNaiveSeconds(ps.P, ps.Q);
+-        if (slowNaive) {
+-            ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.2f, 1.0f),
+-                               "Tempo estimado da DFT ingênua: ~%.1f s. P x Q grande: prefira a FFT.", est);
+-        } else {
+-            ImGui::TextDisabled("Tempo estimado da DFT ingênua: ~%.2f s", est);
+-        }
++                           "P x Q acima do limite (4096 x 4096). Reduza a imagem (escala).");
+     }
+ 
+-    ImGui::BeginDisabled(tooBig || (f.algo == 2 && !core::libraryFFTAvailable()));
+-    if (ImGui::Button("Calcular DFT", ImVec2(-1, 0))) {
+-        if (slowNaive) {
+-            ImGui::OpenPopup("Confirmar DFT ingênua");
+-        } else {
+-            StartForward(state, f);
+-        }
+-    }
++    ImGui::BeginDisabled(busy || tooBig);
++    if (ImGui::Button("Calcular FFT", ImVec2(-1, 0))) StartForward(state, f);
+     ImGui::EndDisabled();
+ 
+-    if (ImGui::BeginPopupModal("Confirmar DFT ingênua", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+-        ImGui::Text("P x Q = %d x %d com a DFT ingênua pode demorar (~%.0f s).", ps.P, ps.Q,
+-                    core::estimateNaiveSeconds(ps.P, ps.Q));
+-        ImGui::Text("A FFT é equivalente e muito mais rápida.");
+-        if (ImGui::Button("Usar FFT própria")) {
+-            f.algo = 1;
+-            ImGui::CloseCurrentPopup();
+-            StartForward(state, f);
+-        }
+-        ImGui::SameLine();
+-        if (ImGui::Button("Continuar com a DFT")) {
+-            ImGui::CloseCurrentPopup();
+-            StartForward(state, f);
+-        }
+-        ImGui::SameLine();
+-        if (ImGui::Button("Cancelar")) ImGui::CloseCurrentPopup();
+-        ImGui::EndPopup();
+-    }
+-    ImGui::EndDisabled();   // busy
+-
+     if (busy) {
+         ImGui::ProgressBar(f.worker.control.progress.load(), ImVec2(-1, 0));
+-        ImGui::Text("%s...", f.worker.kind == Worker::Kind::Forward ? "Calculando a DFT" : "Calculando a transformada inversa");
++        ImGui::Text("%s...", f.worker.kind == Worker::Kind::Forward ? "Calculando a FFT" : "Calculando a transformada inversa");
+         if (ImGui::Button("Cancelar operação", ImVec2(-1, 0))) f.worker.control.cancel = true;
+     }
+ 
+@@ -428,11 +336,10 @@ void RenderFrequencyWindow(AppState& state) {
+     if (!f.info.empty()) ImGui::TextWrapped("%s", f.info.c_str());
+     if (!busy && session.hasTransform() && f.computedRevision != state.imageRevision) {
+         ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.2f, 1.0f),
+-                           "A imagem de trabalho mudou depois do cálculo da DFT. Recalcule para filtrar a imagem atual.");
++                           "A imagem de trabalho mudou depois do cálculo da FFT. Recalcule para filtrar a imagem atual.");
+     }
+     if (!busy && session.hasTransform()) {
+-        ImGui::TextDisabled("DFT em cache: %s, %d x %d. S_max = %.3f", core::algorithmName(session.algorithm()),
+-                            session.P(), session.Q(), session.logMax());
++        ImGui::TextDisabled("FFT em cache: %d x %d. S_max = %.3f", session.P(), session.Q(), session.logMax());
+     }
+ 
+     // ---------------------------------------------------- 2. espectro
+@@ -443,8 +350,6 @@ void RenderFrequencyWindow(AppState& state) {
+         bool changed = false;
+         changed |= ImGui::RadioButton("Espectro |H·F| (o que você riscou)", &mode, 0);
+         changed |= ImGui::RadioButton("Espectro original |F|", &mode, 1);
+-        changed |= ImGui::RadioButton("Máscara H", &mode, 2);
+-        changed |= ImGui::RadioButton("Fase (informativo)", &mode, 3);
+         if (changed) {
+             f.displayMode = mode;
+             session.setDisplayMode(static_cast<core::DisplayMode>(mode));
+@@ -455,58 +360,42 @@ void RenderFrequencyWindow(AppState& state) {
+ 
+     // ---------------------------------------------------- 3. edicao
+     ImGui::SeparatorText("3. Edição do espectro");
+-    ImGui::RadioButton("Pincel", &f.tool, 0);
+-    ImGui::SameLine();
+-    ImGui::RadioButton("Notch por clique", &f.tool, 1);
+     Tooltip("Pincel: risque no espectro. Cada pincelada é espelhada no ponto conjugado\n"
+-            "((P-u) mod P, (Q-v) mod Q), então a imagem filtrada continua real.\n"
+-            "Notch por clique: clique num pico para rejeitar esse pico e o simétrico.");
++            "((P-u) mod P, (Q-v) mod Q), então a imagem filtrada continua real.");
+ 
+-    if (f.tool == 0) {
+-        ImGui::RadioButton("Preto (remove)", &f.brushColor, 0);
+-        ImGui::SameLine();
+-        ImGui::RadioButton("Branco (restaura)", &f.brushColor, 1);
+-        ImGui::SameLine();
+-        ImGui::RadioButton("Cinza (atenua)", &f.brushColor, 2);
+-        ImGui::BeginDisabled(f.brushColor != 2);
+-        ImGui::SetNextItemWidth(-1);
+-        ImGui::SliderInt("##gray", &f.gray, 0, 255, "tom de cinza = %d");
+-        ImGui::EndDisabled();
+-        ImGui::Checkbox("Disco duro (em vez de pincel suave)", &f.hardDisc);
+-        ImGui::SetNextItemWidth(-1);
+-        ImGui::SliderFloat("##radius", &f.radius, 1.0f, 200.0f, "raio = %.1f px", ImGuiSliderFlags_Logarithmic);
+-        ImGui::BeginDisabled(f.hardDisc);
+-        ImGui::SetNextItemWidth(-1);
+-        ImGui::SliderFloat("##hardness", &f.hardness, 0.0f, 1.0f, "dureza = %.2f");
+-        Tooltip("Pincel suave: gaussiano com sigma = raio * (1 - 0,9 * dureza).\n"
+-                "Dureza alta (>= 0,75) acrescenta um núcleo plano: dureza 1 = quase um disco.");
+-        ImGui::EndDisabled();
+-        ImGui::SetNextItemWidth(-1);
+-        ImGui::SliderFloat("##opacity", &f.opacity, 0.05f, 1.0f, "opacidade = %.2f");
+-        ImGui::TextDisabled("H <- H(1 - a·op) + v·a·op   (preto remove, branco restaura)");
+-    } else {
+-        ImGui::SetNextItemWidth(-1);
+-        ImGui::SliderFloat("##notchd0", &f.notchClickD0, 1.0f, 100.0f, "raio do notch D0 = %.1f px", ImGuiSliderFlags_Logarithmic);
+-        ImGui::Text("Formato:");
+-        ImGui::SameLine();
+-        ImGui::RadioButton("Ideal##nc", &f.notchClickShape, 0);
+-        ImGui::SameLine();
+-        ImGui::RadioButton("Butterworth##nc", &f.notchClickShape, 1);
+-        ImGui::SameLine();
+-        ImGui::RadioButton("Gaussiano##nc", &f.notchClickShape, 2);
+-    }
++    ImGui::RadioButton("Preto (remove)", &f.brushColor, 0);
++    ImGui::SameLine();
++    ImGui::RadioButton("Branco (restaura)", &f.brushColor, 1);
++    ImGui::SameLine();
++    ImGui::RadioButton("Cinza (atenua)", &f.brushColor, 2);
++    ImGui::BeginDisabled(f.brushColor != 2);
++    ImGui::SetNextItemWidth(-1);
++    ImGui::SliderInt("##gray", &f.gray, 0, 255, "tom de cinza = %d");
++    ImGui::EndDisabled();
++    ImGui::Checkbox("Disco duro (em vez de pincel suave)", &f.hardDisc);
++    ImGui::SetNextItemWidth(-1);
++    ImGui::SliderFloat("##radius", &f.radius, 1.0f, 200.0f, "raio = %.1f px", ImGuiSliderFlags_Logarithmic);
++    ImGui::BeginDisabled(f.hardDisc);
++    ImGui::SetNextItemWidth(-1);
++    ImGui::SliderFloat("##hardness", &f.hardness, 0.0f, 1.0f, "dureza = %.2f");
++    Tooltip("Pincel suave: gaussiano com sigma = raio * (1 - 0,9 * dureza).\n"
++            "Dureza alta (>= 0,75) acrescenta um núcleo plano: dureza 1 = quase um disco.");
++    ImGui::EndDisabled();
++    ImGui::SetNextItemWidth(-1);
++    ImGui::SliderFloat("##opacity", &f.opacity, 0.05f, 1.0f, "opacidade = %.2f");
++    ImGui::TextDisabled("H <- H(1 - a·op) + v·a·op   (preto remove, branco restaura)");
+ 
+     ImGui::BeginDisabled(!hasF || !session.mask().canUndo());
+     if (ImGui::Button("Desfazer")) {
+         RefreshSpectrumRect(f, session.mask().undo());
+-        if (f.liveIdft && LiveAllowed(f)) StartInverse(f);
++        if (f.liveIdft) StartInverse(f);
+     }
+     ImGui::EndDisabled();
+     ImGui::SameLine();
+     ImGui::BeginDisabled(!hasF || !session.mask().canRedo());
+     if (ImGui::Button("Refazer")) {
+         RefreshSpectrumRect(f, session.mask().redo());
+-        if (f.liveIdft && LiveAllowed(f)) StartInverse(f);
++        if (f.liveIdft) StartInverse(f);
+     }
+     ImGui::EndDisabled();
+     ImGui::SameLine();
+@@ -520,74 +409,8 @@ void RenderFrequencyWindow(AppState& state) {
+         RefreshSpectrumFull(f);
+     }
+ 
+-    // ---------------------------------------------------- 4. pre-definidos
+-    ImGui::SeparatorText("4. Filtros pré-definidos");
+-    {
+-        ImGui::SetNextItemWidth(-1);
+-        if (ImGui::BeginCombo("##kind", core::filterKindName(kKinds[f.presetKind]))) {
+-            for (int i = 0; i < 6; ++i)
+-                if (ImGui::Selectable(core::filterKindName(kKinds[i]), f.presetKind == i)) f.presetKind = i;
+-            ImGui::EndCombo();
+-        }
+-        ImGui::Text("Formato:");
+-        ImGui::SameLine();
+-        ImGui::RadioButton("Ideal", &f.presetShape, 0);
+-        ImGui::SameLine();
+-        ImGui::RadioButton("Butterworth", &f.presetShape, 1);
+-        ImGui::SameLine();
+-        ImGui::RadioButton("Gaussiano", &f.presetShape, 2);
+-        if (f.presetShape == 0) {
+-            ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.2f, 1.0f), "Filtros ideais produzem ringing.");
+-            Tooltip("A resposta espacial de um filtro ideal é uma função sinc: gera ondulações\n"
+-                    "(ringing). Butterworth de baixa ordem e Gaussiano não produzem.");
+-        }
+-
+-        const bool notchKind = (f.presetKind >= 4);
+-        const bool bandKind = (f.presetKind == 2 || f.presetKind == 3);
+-        if (!notchKind) {
+-            ImGui::SetNextItemWidth(-1);
+-            ImGui::SliderFloat("##d0", &f.presetD0, 1.0f, 400.0f, "D0 = %.1f px", ImGuiSliderFlags_Logarithmic);
+-        }
+-        if (bandKind) {
+-            ImGui::SetNextItemWidth(-1);
+-            ImGui::SliderFloat("##w", &f.presetWidth, 1.0f, 200.0f, "largura W = %.1f px", ImGuiSliderFlags_Logarithmic);
+-        }
+-        if (f.presetShape == 1) {
+-            ImGui::SetNextItemWidth(-1);
+-            ImGui::SliderInt("##order", &f.presetOrder, 1, 10, "ordem n = %d");
+-        }
+-        if (notchKind) {
+-            ImGui::TextDisabled("Notches (relativos ao centro): u = linhas, v = colunas");
+-            int removeIdx = -1;
+-            for (size_t i = 0; i < f.notches.size(); ++i) {
+-                ImGui::PushID(static_cast<int>(i));
+-                float vals[3] = {static_cast<float>(f.notches[i].u), static_cast<float>(f.notches[i].v),
+-                                 static_cast<float>(f.notches[i].d0)};
+-                ImGui::SetNextItemWidth(-40);
+-                if (ImGui::InputFloat3("##n", vals, "%.1f")) {
+-                    f.notches[i].u = vals[0];
+-                    f.notches[i].v = vals[1];
+-                    f.notches[i].d0 = std::max(0.5f, vals[2]);
+-                }
+-                ImGui::SameLine();
+-                if (ImGui::Button("x")) removeIdx = static_cast<int>(i);
+-                ImGui::PopID();
+-            }
+-            if (removeIdx >= 0) f.notches.erase(f.notches.begin() + removeIdx);
+-            if (ImGui::Button("Adicionar notch", ImVec2(-1, 0))) f.notches.push_back(core::Notch{0.0, 20.0, 6.0});
+-            ImGui::TextDisabled("(u, v, D0k)  — cada notch inclui o par simétrico");
+-        }
+-
+-        if (ImGui::Button("Aplicar filtro à máscara", ImVec2(-1, 0))) {
+-            session.mask().multiplyBy(core::makeFilter(session.P(), session.Q(), PresetParams(f)));
+-            RefreshSpectrumFull(f);
+-            if (f.liveIdft && LiveAllowed(f)) StartInverse(f);
+-        }
+-        Tooltip("Multiplica a máscara H atual pelo filtro (pode ser combinado com a edição manual).");
+-    }
+-
+-    // ---------------------------------------------------- 5. resultado
+-    ImGui::SeparatorText("5. Imagem filtrada");
++    // ---------------------------------------------------- 4. resultado
++    ImGui::SeparatorText("4. Imagem filtrada");
+     {
+         bool normChanged = false;
+         ImGui::Text("Saída:");
+@@ -595,15 +418,13 @@ void RenderFrequencyWindow(AppState& state) {
+         normChanged |= ImGui::RadioButton("Normalizar min-max", &f.normalization, 0);
+         ImGui::SameLine();
+         normChanged |= ImGui::RadioButton("Recortar [0,255]", &f.normalization, 1);
+-        if (normChanged && hasF && session.hasResult()) ShowResult(f);
++        if (normChanged && hasF && session.hasResult()) ShowResult(state, f);
+ 
+-        ImGui::BeginDisabled(hasF && !LiveAllowed(f));
+         ImGui::Checkbox("Recalcular ao soltar o mouse", &f.liveIdft);
+-        ImGui::EndDisabled();
+-        Tooltip("Aplica a IDFT automaticamente ao terminar cada pincelada (só para tamanhos\n"
+-                "em que isso é rápido). Para imagens grandes use o botão Aplicar.");
++        Tooltip("Aplica a IFFT automaticamente ao terminar cada pincelada.\n"
++                "Para imagens grandes prefira o botão Aplicar.");
+ 
+-        if (ImGui::Button("Aplicar (IDFT)", ImVec2(-1, 0))) StartInverse(f);
++        if (ImGui::Button("Aplicar (IFFT)", ImVec2(-1, 0))) StartInverse(f);
+         ImGui::EndDisabled();   // !hasF  (abre em "2. Espectro")
+ 
+         ImGui::BeginDisabled(!f.hasResult || busy);
+@@ -613,7 +434,7 @@ void RenderFrequencyWindow(AppState& state) {
+             // cinza (R = G = B) isso equivale a trocar a imagem pelo resultado.
+             if (f.result.getRows() != state.workingImage.getRows() ||
+                 f.result.getCols() != state.workingImage.getCols()) {
+-                state.statusMessage = "O resultado não tem o tamanho da imagem de trabalho atual; refaça a DFT.";
++                state.statusMessage = "O resultado não tem o tamanho da imagem de trabalho atual; refaça a FFT.";
+             } else {
+                 core::applyToPlanes(state.workingImage, core::ColorTarget::IntensityHSI,
+                                     [&](core::Image& intensity) { intensity = f.result; });
+@@ -624,7 +445,7 @@ void RenderFrequencyWindow(AppState& state) {
+         ImGui::EndDisabled();
+         if (!busy && session.hasResult()) {
+             ImGui::TextDisabled("max|Im|/max|Re| residual: %.2e", session.residualImag());
+-            if (f.dftMs > 0) ImGui::TextDisabled("DFT: %.0f ms | IDFT: %.0f ms", f.dftMs, f.idftMs);
++            if (f.dftMs > 0) ImGui::TextDisabled("FFT: %.0f ms | IFFT: %.0f ms", f.dftMs, f.idftMs);
+         }
+     }
+ 
+@@ -652,20 +473,16 @@ void RenderFrequencyWindow(AppState& state) {
+     auto overlay = [&](ImDrawList* dl, const PaneEvents& ev, float zoom) {
+         if (!canEdit || !(ev.hovered || ev.active)) return;
+         const ImVec2 mouse = ImGui::GetIO().MousePos;
+-        if (f.tool == 0) {
+-            // circulo do raio (e da extensao efetiva, se maior) + o espelho conjugado
+-            const float r = static_cast<float>(f.radius) * zoom;
+-            const float ext = static_cast<float>(core::SpectrumMask::brushExtent(brush)) * zoom;
+-            dl->AddCircle(mouse, std::max(2.0f, r), IM_COL32(255, 80, 80, 255), 32, 1.5f);
+-            if (ext > r + 1.0f) dl->AddCircle(mouse, ext, IM_COL32(255, 80, 80, 110), 32, 1.0f);
+-            const double row = (mouse.y - ev.imgMin.y) / zoom - 0.5;
+-            const double col = (mouse.x - ev.imgMin.x) / zoom - 0.5;
+-            const ImVec2 mir(ev.imgMin.x + static_cast<float>(Q - col + 0.5) * zoom,
+-                             ev.imgMin.y + static_cast<float>(P - row + 0.5) * zoom);
+-            dl->AddCircle(mir, std::max(2.0f, r), IM_COL32(80, 160, 255, 200), 32, 1.0f);
+-        } else {
+-            dl->AddCircle(mouse, std::max(2.0f, f.notchClickD0 * zoom), IM_COL32(255, 200, 60, 255), 32, 1.5f);
+-        }
++        // circulo do raio (e da extensao efetiva, se maior) + o espelho conjugado
++        const float r = static_cast<float>(f.radius) * zoom;
++        const float ext = static_cast<float>(core::SpectrumMask::brushExtent(brush)) * zoom;
++        dl->AddCircle(mouse, std::max(2.0f, r), IM_COL32(255, 80, 80, 255), 32, 1.5f);
++        if (ext > r + 1.0f) dl->AddCircle(mouse, ext, IM_COL32(255, 80, 80, 110), 32, 1.0f);
++        const double row = (mouse.y - ev.imgMin.y) / zoom - 0.5;
++        const double col = (mouse.x - ev.imgMin.x) / zoom - 0.5;
++        const ImVec2 mir(ev.imgMin.x + static_cast<float>(Q - col + 0.5) * zoom,
++                         ev.imgMin.y + static_cast<float>(P - row + 0.5) * zoom);
++        dl->AddCircle(mir, std::max(2.0f, r), IM_COL32(80, 160, 255, 200), 32, 1.0f);
+     };
+ 
+     const PaneEvents ev = DrawPane("spec", "Espectro (editável)", f.spectrumTexture, P, Q, f.specPane,
+@@ -677,30 +494,22 @@ void RenderFrequencyWindow(AppState& state) {
+         const ImVec2 cur(static_cast<float>((mouse.y - ev.imgMin.y) / zoom - 0.5),     // x = linha u
+                          static_cast<float>((mouse.x - ev.imgMin.x) / zoom - 0.5));    // y = coluna v
+ 
+-        if (f.tool == 0) {
+-            if (ev.active) {
+-                std::vector<core::Rect> rects;
+-                if (!f.painting) {
+-                    f.painting = true;
+-                    session.mask().beginStroke();
+-                    rects = session.mask().paintSegment(cur.x, cur.y, cur.x, cur.y, brush);
+-                    f.lastPos = cur;
+-                } else if (cur.x != f.lastPos.x || cur.y != f.lastPos.y) {
+-                    rects = session.mask().paintSegment(f.lastPos.x, f.lastPos.y, cur.x, cur.y, brush);
+-                    f.lastPos = cur;
+-                }
+-                for (const core::Rect& r : rects) RefreshSpectrumRect(f, r);
+-            }
+-            if (f.painting && !ev.active) {
+-                session.mask().endStroke();
+-                f.painting = false;
+-                strokeEnded = true;
++        if (ev.active) {
++            std::vector<core::Rect> rects;
++            if (!f.painting) {
++                f.painting = true;
++                session.mask().beginStroke();
++                rects = session.mask().paintSegment(cur.x, cur.y, cur.x, cur.y, brush);
++                f.lastPos = cur;
++            } else if (cur.x != f.lastPos.x || cur.y != f.lastPos.y) {
++                rects = session.mask().paintSegment(f.lastPos.x, f.lastPos.y, cur.x, cur.y, brush);
++                f.lastPos = cur;
+             }
+-        } else if (ev.clicked) {
+-            const std::vector<float> filter = core::makeNotchRejectAt(
+-                P, Q, cur.x, cur.y, f.notchClickD0, f.presetOrder, kShapes[f.notchClickShape]);
+-            session.mask().multiplyBy(filter);
+-            RefreshSpectrumFull(f);
++            for (const core::Rect& r : rects) RefreshSpectrumRect(f, r);
++        }
++        if (f.painting && !ev.active) {
++            session.mask().endStroke();
++            f.painting = false;
+             strokeEnded = true;
+         }
+     } else if (f.painting) {
+@@ -708,7 +517,7 @@ void RenderFrequencyWindow(AppState& state) {
+         f.painting = false;
+     }
+ 
+-    if (strokeEnded && f.liveIdft && LiveAllowed(f)) StartInverse(f);
++    if (strokeEnded && f.liveIdft) StartInverse(f);
+ 
+     ImGui::SameLine();
+     DrawPane("res", "Imagem filtrada", f.hasResult ? f.resultTexture : 0,
