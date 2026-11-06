@@ -93,6 +93,7 @@ add_executable(processador_gui
     ui/AppState.cpp
     ui/ImageTexture.cpp
     ui/LeftPanel.cpp
+    ui/ContrastCurve.cpp
     ui/CenterPanel.cpp
     ui/RightPanel.cpp
     ui/CompareWindow.cpp

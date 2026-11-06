@@ -44,6 +44,9 @@ namespace ui {
         int stretchS1 = 0;
         int stretchR2 = 180;               
         int stretchS2 = 255;
+        bool stretchLivePreview = false;   // grafico interativo: previa na imagem enquanto arrasta os pontos
+        int stretchPreviewRevision = -1;   // imageRevision/alvo da ultima previa desenhada (-1: nenhuma)
+        int stretchPreviewTarget = -1;
 
         int sliceMin = 100;                
         int sliceMax = 180;

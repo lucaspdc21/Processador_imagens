@@ -1,11 +1,33 @@
 #include "LeftPanel.hpp"
 #include "ImageTexture.hpp"
+#include "ContrastCurve.hpp"
+#include "ImageColor.hpp"
+#include "ImageIntensity.hpp"
 #include "imgui.h"
 #include "tinyfiledialogs.h"
 #include <cstdio>
 #include <string>
 
 namespace ui {
+
+namespace {
+
+    // Previa do alargamento de contraste: so a textura exibida muda, a imagem de
+    // trabalho (e os histogramas) continuam intactos ate clicar em "Aplicar".
+    void ShowContrastPreview(AppState& state) {
+        core::ColorImage preview = state.workingImage;
+        core::applyToPlanes(preview, state.colorTarget(), [&](core::Image& p) {
+            core::contrastStretch(p, state.stretchR1, state.stretchS1, state.stretchR2, state.stretchS2);
+        });
+        if (state.colorView() != core::ColorView::Color) {
+            preview = core::makeView(preview, state.colorView());
+        }
+        state.textureId = UploadImageToTexture(preview, state.textureId);
+        state.stretchPreviewRevision = state.imageRevision;
+        state.stretchPreviewTarget = state.colorTargetChoice;
+    }
+
+}
 
 void RenderLeftPanel(AppState& state, float width, float height) {
     ImGui::BeginChild("PainelMetodos", ImVec2(width, height), true);
@@ -255,16 +277,37 @@ void RenderLeftPanel(AppState& state, float width, float height) {
 
         // Alargamento de contraste
         ImGui::SeparatorText("5a. Alargamento de contraste");
-        ImGui::TextDisabled("Pontos de controle (r1,s1) e (r2,s2)");
+        ImGui::TextDisabled("Arraste os pontos (r1,s1) e (r2,s2) no gráfico");
+        bool stretchChanged = ContrastCurveEditor("##curvaContraste", state.stretchR1, state.stretchS1,
+                                                  state.stretchR2, state.stretchS2);
+        // Os mesmos valores, para ajuste fino (r1 <= r2)
         ImGui::SetNextItemWidth(-1);
-        ImGui::SliderInt("##r1s1", &state.stretchR1, 0, 255, "r1 = %d");
+        stretchChanged |= ImGui::SliderInt("##r1s1", &state.stretchR1, 0, state.stretchR2, "r1 = %d");
         ImGui::SetNextItemWidth(-1);
-        ImGui::SliderInt("##s1", &state.stretchS1, 0, 255, "s1 = %d");
+        stretchChanged |= ImGui::SliderInt("##s1", &state.stretchS1, 0, 255, "s1 = %d");
         ImGui::SetNextItemWidth(-1);
-        ImGui::SliderInt("##r2", &state.stretchR2, 0, 255, "r2 = %d");
+        stretchChanged |= ImGui::SliderInt("##r2", &state.stretchR2, state.stretchR1, 255, "r2 = %d");
         ImGui::SetNextItemWidth(-1);
-        ImGui::SliderInt("##s2", &state.stretchS2, 0, 255, "s2 = %d");
+        stretchChanged |= ImGui::SliderInt("##s2", &state.stretchS2, 0, 255, "s2 = %d");
+        if (ImGui::Button("Restaurar identidade", ImVec2(-1, 0))) {
+            state.stretchR1 = 85;  state.stretchS1 = 85;
+            state.stretchR2 = 170; state.stretchS2 = 170;
+            stretchChanged = true;
+        }
+        if (ImGui::Checkbox("Pré-visualizar na imagem", &state.stretchLivePreview)) {
+            if (state.stretchLivePreview) stretchChanged = true;
+            else RefreshTexture(state);   // volta a exibir a imagem de trabalho
+        }
+        if (state.stretchLivePreview && state.hasImage) {
+            // Redesenha a previa quando o grafico muda, ou quando a imagem / o alvo de cor mudou
+            if (stretchChanged || state.stretchPreviewRevision != state.imageRevision ||
+                state.stretchPreviewTarget != state.colorTargetChoice) {
+                ShowContrastPreview(state);
+            }
+            ImGui::TextDisabled("Prévia: a imagem só muda ao aplicar.");
+        }
         if (ImGui::Button("Aplicar alargamento de contraste", ImVec2(-1, 0))) {
+            state.stretchLivePreview = false;   // evita aplicar a previa por cima do resultado
             state.applyContrastStretch();
             RefreshTexture(state);
         }

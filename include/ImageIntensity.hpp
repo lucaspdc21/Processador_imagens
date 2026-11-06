@@ -27,7 +27,13 @@ namespace core {
     void gammaCorrection(Image& img, double gamma, double c);
 
     // contraste
+    // Funcao linear por partes definida pelos pontos (0,0), (r1,s1), (r2,s2) e (255,255).
     void contrastStretch(Image& img, int r1, int s1, int r2, int s2);
+
+    // Valor T(r) da mesma funcao usada por contrastStretch (mesmos limites e
+    // mesma ordem de r1 <= r2). Usada pelo grafico interativo da interface, para
+    // que a curva desenhada seja exatamente a transformacao aplicada.
+    double contrastStretchValue(double r, int r1, int s1, int r2, int s2);
 
     // 5b. Funcoes lineares por partes: fatiamento de niveis de intensidade
     //Pixels com valor em [rMin, rMax] viram highlightValue

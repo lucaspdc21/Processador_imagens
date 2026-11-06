@@ -100,18 +100,26 @@ void gammaCorrection(Image& img, double gamma, double c) {
     }
 }
 
-void contrastStretch(Image& img, int r1, int s1, int r2, int s2) {
+double contrastStretchValue(double r, int r1, int s1, int r2, int s2) {
     r1 = std::max(0, std::min(r1, 255));
     r2 = std::max(0, std::min(r2, 255));
     s1 = std::max(0, std::min(s1, 255));
     s2 = std::max(0, std::min(s2, 255));
     if (r1 > r2) std::swap(r1, r2); // mantem os pontos em ordem crescente
+    return pieceLinear(r, r1, s1, r2, s2);
+}
+
+void contrastStretch(Image& img, int r1, int s1, int r2, int s2) {
+    // Tabela indexada: lut[r] = T(r), calculada uma vez para os 256 niveis
+    int lut[256];
+    for (int r = 0; r < 256; ++r) {
+        lut[r] = clampByte(contrastStretchValue(static_cast<double>(r), r1, s1, r2, s2));
+    }
 
     for (int row = 0; row < img.getRows(); ++row) {
         for (int col = 0; col < img.getCols(); ++col) {
             int r = std::max(0, std::min(img.pixel(row, col), 255));
-            double s = pieceLinear(static_cast<double>(r), r1, s1, r2, s2);
-            img.pixel(row, col) = clampByte(s);
+            img.pixel(row, col) = lut[r];
         }
     }
 }
