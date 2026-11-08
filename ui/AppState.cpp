@@ -424,9 +424,8 @@ core::ChromaKeyParams AppState::chromaKeyParams() const {
     p.keyR = static_cast<int>(std::lround(chromaKeyColor[0] * 255.0f));
     p.keyG = static_cast<int>(std::lround(chromaKeyColor[1] * 255.0f));
     p.keyB = static_cast<int>(std::lround(chromaKeyColor[2] * 255.0f));
-    p.tolerance = static_cast<double>(chromaTolerance) / 100.0;
-    p.feather = static_cast<double>(chromaFeather) / 100.0;
-    p.mode = (chromaMode == 1) ? core::ChromaKeyMode::Cube : core::ChromaKeyMode::Sphere;
+    p.hueTolerance = static_cast<double>(chromaTolerance);
+    p.feather = static_cast<double>(chromaFeather);
     return p;
 }
 
@@ -437,7 +436,7 @@ void AppState::applyChromaKey() {
         return;
     }
     core::chromaKey(workingImage, chromaBackground, chromaKeyParams());
-    statusMessage = "Chroma-key aplicado (distância = " + std::to_string(static_cast<int>(chromaTolerance)) + "%).";
+    statusMessage = "Chroma-key aplicado (tolerância de matiz = " + std::to_string(static_cast<int>(chromaTolerance)) + "°).";
 }
 
 void AppState::pickChromaColor(int row, int col) {

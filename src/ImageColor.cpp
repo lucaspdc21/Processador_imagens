@@ -16,6 +16,16 @@ namespace {
 
     inline double clamp01(double v) { return v < 0.0 ? 0.0 : (v > 1.0 ? 1.0 : v); }
 
+    // Chroma-key: limiares abaixo dos quais o matiz H deixa de ser confiavel
+    const double kKeyMinSaturation = 0.10;               // S minimo da cor-chave
+    const double kSatLow = 0.10, kSatHigh = 0.25;        // rampa de confianca em S
+    const double kIntLow = 0.03, kIntHigh = 0.10;        // rampa de confianca em I
+
+    inline double smoothstep(double e0, double e1, double v) {
+        const double t = clamp01((v - e0) / (e1 - e0));
+        return t * t * (3.0 - 2.0 * t);
+    }
+
     inline int pix(Image& img, int y, int x) {
         return std::max(0, std::min(img.getData()[static_cast<size_t>(y)][static_cast<size_t>(x)], 255));
     }
@@ -128,14 +138,15 @@ void sepia(ColorImage& img, const SepiaParams& params) {
     img = hsiToRgb(hsi, img);
 }
 
-double chromaKeyMaxDistance(ChromaKeyMode mode) {
-    return mode == ChromaKeyMode::Sphere ? 255.0 * std::sqrt(3.0) : 255.0;
-}
-
 void chromaKey(ColorImage& front, ColorImage& background, const ChromaKeyParams& params) {
     const int rows = front.getRows();
     const int cols = front.getCols();
     if (rows <= 0 || cols <= 0 || background.getRows() <= 0 || background.getCols() <= 0) return;
+
+    // Matiz da cor-chave (uma unica conversao RGB -> HSI)
+    const Hsi key = rgbToHsi(clamp01(params.keyR / 255.0), clamp01(params.keyG / 255.0),
+                             clamp01(params.keyB / 255.0));
+    if (key.s < kKeyMinSaturation) return;   // cor-chave cinza: matiz indefinido
 
     // Fundo no tamanho da frente
     ColorImage bg = background;
@@ -145,33 +156,33 @@ void chromaKey(ColorImage& front, ColorImage& background, const ChromaKeyParams&
         }
     }
 
-    const double dMax = chromaKeyMaxDistance(params.mode);
-    const double d0 = clamp01(params.tolerance) * dMax;
-    const double soft = clamp01(params.feather) * dMax;
+    const double d0 = std::max(0.0, std::min(params.hueTolerance, 180.0));
+    const double soft = std::max(0.0, params.feather);
 
     for (int y = 0; y < rows; ++y) {
         for (int x = 0; x < cols; ++x) {
-            const double dr = pix(front.r(), y, x) - params.keyR;
-            const double dg = pix(front.g(), y, x) - params.keyG;
-            const double db = pix(front.b(), y, x) - params.keyB;
+            const Hsi p = rgbToHsi(pix(front.r(), y, x) / 255.0,
+                                   pix(front.g(), y, x) / 255.0,
+                                   pix(front.b(), y, x) / 255.0);
 
-            double dist;
-            if (params.mode == ChromaKeyMode::Sphere) {
-                dist = std::sqrt(dr * dr + dg * dg + db * db);
-            } else {
-                dist = std::max(std::fabs(dr), std::max(std::fabs(dg), std::fabs(db)));
-            }
+            // Confianca do matiz: ~0 em cinzas/pretos (H nao e confiavel), 1 em cores vivas
+            const double trust = smoothstep(kSatLow, kSatHigh, p.s) * smoothstep(kIntLow, kIntHigh, p.i);
+            if (trust <= 0.0) continue;
+
+            // Distancia angular circular entre os matizes (0..180 graus)
+            double dh = std::fabs(p.h - key.h);
+            if (dh > 180.0) dh = 360.0 - dh;
 
             // w = peso do fundo: 1 dentro de D0, cai suavemente ate 0 em D0 + soft
             double w;
-            if (dist <= d0) {
+            if (dh <= d0) {
                 w = 1.0;
-            } else if (soft > 0.0 && dist < d0 + soft) {
-                const double t = (dist - d0) / soft;
-                w = 1.0 - t * t * (3.0 - 2.0 * t);   // smoothstep
+            } else if (soft > 0.0 && dh < d0 + soft) {
+                w = 1.0 - smoothstep(0.0, 1.0, (dh - d0) / soft);
             } else {
                 w = 0.0;
             }
+            w *= trust;
             if (w <= 0.0) continue;
 
             for (int c = 0; c < ColorImage::kChannels; ++c) {

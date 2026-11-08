@@ -123,9 +123,8 @@ namespace ui {
         bool hasChromaBackground = false;
         std::string chromaBackgroundName;
         float chromaKeyColor[3] = {0.0f, 1.0f, 0.0f};   // cor-chave a (RGB em [0, 1])
-        float chromaTolerance = 40.0f;                  // D0 em % da distancia maxima
-        float chromaFeather = 0.0f;                     // borda suave, em %
-        int chromaMode = 0;                             // 0: esfera (euclidiana) | 1: cubo
+        float chromaTolerance = 25.0f;                  // D0: tolerancia angular do matiz, em graus
+        float chromaFeather = 5.0f;                     // borda suave, em graus
         bool chromaPicking = false;                     // conta-gotas ativo (clique na imagem)
         int chromaPickRadius = 2;                       // media numa janela (2r+1)^2
 

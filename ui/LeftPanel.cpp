@@ -198,14 +198,11 @@ void RenderLeftPanel(AppState& state, float width, float height) {
             state.chromaKeyColor[2] = 0.0f;
         }
 
-        const char* chromaModes[] = {"Esfera: distância euclidiana", "Cubo: |zj - aj| <= D0 em cada canal"};
         ImGui::SetNextItemWidth(-1);
-        ImGui::Combo("##chromaMode", &state.chromaMode, chromaModes, 2);
+        ImGui::SliderFloat("##chromaTol", &state.chromaTolerance, 0.0f, 90.0f, "distância D0 (matiz) = %.1f°");
+        ImGui::TextDisabled("Compara só o ângulo H (matiz); a intensidade é ignorada, então sombras e brilhos no fundo não afetam o recorte.");
         ImGui::SetNextItemWidth(-1);
-        ImGui::SliderFloat("##chromaTol", &state.chromaTolerance, 0.0f, 100.0f, "distância D0 = %.1f%%");
-        ImGui::TextDisabled("D(z, a) <= D0: pixel vira o fundo. 100%% = distância máxima do RGB.");
-        ImGui::SetNextItemWidth(-1);
-        ImGui::SliderFloat("##chromaFeather", &state.chromaFeather, 0.0f, 30.0f, "borda suave = %.1f%%");
+        ImGui::SliderFloat("##chromaFeather", &state.chromaFeather, 0.0f, 45.0f, "borda suave = %.1f°");
         if (ImGui::Button("Aplicar chroma-key", ImVec2(-1, 0))) {
             state.applyChromaKey();
             RefreshTexture(state);

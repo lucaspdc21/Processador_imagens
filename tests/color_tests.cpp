@@ -172,22 +172,50 @@ static void testChromaKey() {
     back.r().pixel(0, 0) = 7; back.g().pixel(0, 0) = 8; back.b().pixel(0, 0) = 9;
 
     ChromaKeyParams p;
-    p.tolerance = 0.20;   // D0 ~ 88: pega os dois verdes
+    p.hueTolerance = 20.0;   // pega os dois verdes (matiz ~118 e 120), nao o vermelho/azul
+    p.feather = 0.0;
     ColorImage out = front;
     chromaKey(out, back, p);   // fundo 1x1 e ampliado para 2x2
     check(out.r().pixel(0, 0) == 7 && out.g().pixel(0, 1) == 8 && out.b().pixel(0, 1) == 9, "chroma-key troca os verdes");
     check(out.r().pixel(1, 0) == 255 && out.b().pixel(1, 1) == 255, "chroma-key mantem as outras cores");
 
-    p.tolerance = 0.0;   // so o verde exato
+    p.hueTolerance = 0.0;   // so o matiz exato
     out = front;
     chromaKey(out, back, p);
     check(out.r().pixel(0, 0) == 7 && out.r().pixel(0, 1) == 20, "tolerancia 0: so o verde exato");
 
-    p.mode = ChromaKeyMode::Cube;
-    p.tolerance = 0.10;   // meia-largura ~25 por canal: pega (20,235,10)
-    out = front;
+    // Imune a sombra/brilho: verde escuro e verde claro tem o mesmo matiz
+    ColorImage lum(1, 3);
+    const int lp[3][3] = {{0, 90, 0}, {80, 255, 80}, {128, 128, 128}};
+    for (int k = 0; k < 3; ++k) {
+        lum.r().pixel(0, k) = lp[k][0];
+        lum.g().pixel(0, k) = lp[k][1];
+        lum.b().pixel(0, k) = lp[k][2];
+    }
+    p.hueTolerance = 20.0;
+    out = lum;
     chromaKey(out, back, p);
-    check(out.r().pixel(0, 1) == 7, "modo cubo");
+    check(out.r().pixel(0, 0) == 7 && out.r().pixel(0, 1) == 7, "chroma-key ignora a intensidade (sombra e brilho)");
+    check(out.r().pixel(0, 2) == 128, "chroma-key nao remove cinza (matiz indefinido)");
+
+    // Cinza com cor-chave vermelha (H = 0): o cinza tem H = 0 mas nao pode ser removido
+    p.keyR = 255; p.keyG = 0; p.keyB = 0;
+    p.hueTolerance = 30.0;
+    out = lum;
+    chromaKey(out, back, p);
+    check(out.r().pixel(0, 2) == 128, "cinza nunca e confundido com a cor-chave");
+
+    // Borda suave: alpha blending entre D0 e D0 + feather
+    ColorImage edge(1, 1);
+    edge.r().pixel(0, 0) = 0; edge.g().pixel(0, 0) = 255; edge.b().pixel(0, 0) = 0;
+    ColorImage white(1, 1);
+    white.r().pixel(0, 0) = 255; white.g().pixel(0, 0) = 255; white.b().pixel(0, 0) = 255;
+    p = ChromaKeyParams();
+    p.keyR = 0; p.keyG = 200; p.keyB = 100;    // matiz ~ 150: D = 30 em relacao ao verde puro
+    p.hueTolerance = 20.0;
+    p.feather = 20.0;                           // 30 esta no meio da faixa 20..40
+    chromaKey(edge, white, p);
+    check(edge.r().pixel(0, 0) > 100 && edge.r().pixel(0, 0) < 155, "borda suave mistura frente e fundo");
 }
 
 static void testHistogramsAndMisc() {

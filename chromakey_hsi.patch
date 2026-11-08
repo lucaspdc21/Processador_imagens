@@ -1,0 +1,253 @@
+--- a/include/ImageColor.hpp
++++ b/include/ImageColor.hpp
+@@ -55,30 +55,25 @@
+ 
+     void sepia(ColorImage& img, const SepiaParams& params);
+ 
+-    // ---- Chroma-key ----
+-    enum class ChromaKeyMode {
+-        Sphere,   // distancia euclidiana no RGB (Eq. 6.7-1)
+-        Cube      // distancia de Chebyshev: cubo de meia-largura W/2 (Eq. 6.5-7)
+-    };
+-
++    // ---- Chroma-key (distancia angular no matiz H do HSI) ----
++    // O pixel e a cor-chave sao comparados so pelo matiz H (angulo, 0..360):
++    //   D(z, a) = min(|Hz - Ha|, 360 - |Hz - Ha|)   em graus, 0..180
++    // O plano I (intensidade) e ignorado, entao sombras e brilhos no fundo
++    // verde nao mudam o resultado. Como H e instavel quando a cor e quase
++    // cinza (S ~ 0) ou quase preta (I ~ 0), esses pixels nunca sao removidos.
+     struct ChromaKeyParams {
+         int keyR = 0;
+         int keyG = 255;
+         int keyB = 0;                  // cor-chave a = (0, 255, 0)
+-        double tolerance = 0.40;       // D0 em [0, 1]: 1 = distancia maxima possivel
+-        double feather = 0.0;          // [0, 1]: largura da borda suave (0 = mascara dura)
+-        ChromaKeyMode mode = ChromaKeyMode::Sphere;
++        double hueTolerance = 25.0;    // D0: tolerancia angular do matiz, em graus (0..180)
++        double feather = 5.0;          // borda suave: faixa extra em graus (0 = mascara dura)
+     };
+ 
+-    // Distancia maxima no RGB de 8 bits: sqrt(3)*255 (esfera) ou 255 (cubo)
+-    double chromaKeyMaxDistance(ChromaKeyMode mode);
+-
+-    // Substitui os pixels de 'front' proximos da cor-chave pelos pixels de
+-    // 'background'. O fundo e redimensionado (bilinear) para o tamanho de
+-    // 'front' se for diferente. A frente e alterada no lugar.
+-    //   D(z, a) <= D0  -> pixel do fundo
+-    //   caso contrario -> pixel da frente
+-    // Com feather > 0 a transicao e suave (mistura) entre D0 e D0 + feather.
++    // Substitui os pixels de 'front' cujo matiz esta a ate D0 graus do matiz
++    // da cor-chave pelos pixels de 'background' (redimensionado, bilinear, se
++    // o tamanho for diferente). Entre D0 e D0 + feather o peso do fundo cai
++    // suavemente de 1 a 0 (alpha blending). A frente e alterada no lugar.
++    // Se a cor-chave for cinza (matiz indefinido), nada e alterado.
+     void chromaKey(ColorImage& front, ColorImage& background, const ChromaKeyParams& params);
+ 
+     // Media do RGB numa janela (2*radius+1)^2 centrada em (row, col), para
+--- a/src/ImageColor.cpp
++++ b/src/ImageColor.cpp
+@@ -16,6 +16,16 @@
+ 
+     inline double clamp01(double v) { return v < 0.0 ? 0.0 : (v > 1.0 ? 1.0 : v); }
+ 
++    // Chroma-key: limiares abaixo dos quais o matiz H deixa de ser confiavel
++    const double kKeyMinSaturation = 0.10;               // S minimo da cor-chave
++    const double kSatLow = 0.10, kSatHigh = 0.25;        // rampa de confianca em S
++    const double kIntLow = 0.03, kIntHigh = 0.10;        // rampa de confianca em I
++
++    inline double smoothstep(double e0, double e1, double v) {
++        const double t = clamp01((v - e0) / (e1 - e0));
++        return t * t * (3.0 - 2.0 * t);
++    }
++
+     inline int pix(Image& img, int y, int x) {
+         return std::max(0, std::min(img.getData()[static_cast<size_t>(y)][static_cast<size_t>(x)], 255));
+     }
+@@ -128,15 +138,16 @@
+     img = hsiToRgb(hsi, img);
+ }
+ 
+-double chromaKeyMaxDistance(ChromaKeyMode mode) {
+-    return mode == ChromaKeyMode::Sphere ? 255.0 * std::sqrt(3.0) : 255.0;
+-}
+-
+ void chromaKey(ColorImage& front, ColorImage& background, const ChromaKeyParams& params) {
+     const int rows = front.getRows();
+     const int cols = front.getCols();
+     if (rows <= 0 || cols <= 0 || background.getRows() <= 0 || background.getCols() <= 0) return;
+ 
++    // Matiz da cor-chave (uma unica conversao RGB -> HSI)
++    const Hsi key = rgbToHsi(clamp01(params.keyR / 255.0), clamp01(params.keyG / 255.0),
++                             clamp01(params.keyB / 255.0));
++    if (key.s < kKeyMinSaturation) return;   // cor-chave cinza: matiz indefinido
++
+     // Fundo no tamanho da frente
+     ColorImage bg = background;
+     if (bg.getRows() != rows || bg.getCols() != cols) {
+@@ -145,33 +156,33 @@
+         }
+     }
+ 
+-    const double dMax = chromaKeyMaxDistance(params.mode);
+-    const double d0 = clamp01(params.tolerance) * dMax;
+-    const double soft = clamp01(params.feather) * dMax;
++    const double d0 = std::max(0.0, std::min(params.hueTolerance, 180.0));
++    const double soft = std::max(0.0, params.feather);
+ 
+     for (int y = 0; y < rows; ++y) {
+         for (int x = 0; x < cols; ++x) {
+-            const double dr = pix(front.r(), y, x) - params.keyR;
+-            const double dg = pix(front.g(), y, x) - params.keyG;
+-            const double db = pix(front.b(), y, x) - params.keyB;
+-
+-            double dist;
+-            if (params.mode == ChromaKeyMode::Sphere) {
+-                dist = std::sqrt(dr * dr + dg * dg + db * db);
+-            } else {
+-                dist = std::max(std::fabs(dr), std::max(std::fabs(dg), std::fabs(db)));
+-            }
++            const Hsi p = rgbToHsi(pix(front.r(), y, x) / 255.0,
++                                   pix(front.g(), y, x) / 255.0,
++                                   pix(front.b(), y, x) / 255.0);
++
++            // Confianca do matiz: ~0 em cinzas/pretos (H nao e confiavel), 1 em cores vivas
++            const double trust = smoothstep(kSatLow, kSatHigh, p.s) * smoothstep(kIntLow, kIntHigh, p.i);
++            if (trust <= 0.0) continue;
++
++            // Distancia angular circular entre os matizes (0..180 graus)
++            double dh = std::fabs(p.h - key.h);
++            if (dh > 180.0) dh = 360.0 - dh;
+ 
+             // w = peso do fundo: 1 dentro de D0, cai suavemente ate 0 em D0 + soft
+             double w;
+-            if (dist <= d0) {
++            if (dh <= d0) {
+                 w = 1.0;
+-            } else if (soft > 0.0 && dist < d0 + soft) {
+-                const double t = (dist - d0) / soft;
+-                w = 1.0 - t * t * (3.0 - 2.0 * t);   // smoothstep
++            } else if (soft > 0.0 && dh < d0 + soft) {
++                w = 1.0 - smoothstep(0.0, 1.0, (dh - d0) / soft);
+             } else {
+                 w = 0.0;
+             }
++            w *= trust;
+             if (w <= 0.0) continue;
+ 
+             for (int c = 0; c < ColorImage::kChannels; ++c) {
+--- a/ui/include/AppState.hpp
++++ b/ui/include/AppState.hpp
+@@ -123,9 +123,8 @@
+         bool hasChromaBackground = false;
+         std::string chromaBackgroundName;
+         float chromaKeyColor[3] = {0.0f, 1.0f, 0.0f};   // cor-chave a (RGB em [0, 1])
+-        float chromaTolerance = 40.0f;                  // D0 em % da distancia maxima
+-        float chromaFeather = 0.0f;                     // borda suave, em %
+-        int chromaMode = 0;                             // 0: esfera (euclidiana) | 1: cubo
++        float chromaTolerance = 25.0f;                  // D0: tolerancia angular do matiz, em graus
++        float chromaFeather = 5.0f;                     // borda suave, em graus
+         bool chromaPicking = false;                     // conta-gotas ativo (clique na imagem)
+         int chromaPickRadius = 2;                       // media numa janela (2r+1)^2
+ 
+--- a/ui/AppState.cpp
++++ b/ui/AppState.cpp
+@@ -424,9 +424,8 @@
+     p.keyR = static_cast<int>(std::lround(chromaKeyColor[0] * 255.0f));
+     p.keyG = static_cast<int>(std::lround(chromaKeyColor[1] * 255.0f));
+     p.keyB = static_cast<int>(std::lround(chromaKeyColor[2] * 255.0f));
+-    p.tolerance = static_cast<double>(chromaTolerance) / 100.0;
+-    p.feather = static_cast<double>(chromaFeather) / 100.0;
+-    p.mode = (chromaMode == 1) ? core::ChromaKeyMode::Cube : core::ChromaKeyMode::Sphere;
++    p.hueTolerance = static_cast<double>(chromaTolerance);
++    p.feather = static_cast<double>(chromaFeather);
+     return p;
+ }
+ 
+@@ -437,7 +436,7 @@
+         return;
+     }
+     core::chromaKey(workingImage, chromaBackground, chromaKeyParams());
+-    statusMessage = "Chroma-key aplicado (distância = " + std::to_string(static_cast<int>(chromaTolerance)) + "%).";
++    statusMessage = "Chroma-key aplicado (tolerância de matiz = " + std::to_string(static_cast<int>(chromaTolerance)) + "°).";
+ }
+ 
+ void AppState::pickChromaColor(int row, int col) {
+--- a/ui/LeftPanel.cpp
++++ b/ui/LeftPanel.cpp
+@@ -198,14 +198,11 @@
+             state.chromaKeyColor[2] = 0.0f;
+         }
+ 
+-        const char* chromaModes[] = {"Esfera: distância euclidiana", "Cubo: |zj - aj| <= D0 em cada canal"};
+         ImGui::SetNextItemWidth(-1);
+-        ImGui::Combo("##chromaMode", &state.chromaMode, chromaModes, 2);
++        ImGui::SliderFloat("##chromaTol", &state.chromaTolerance, 0.0f, 90.0f, "distância D0 (matiz) = %.1f°");
++        ImGui::TextDisabled("Compara só o ângulo H (matiz); a intensidade é ignorada, então sombras e brilhos no fundo não afetam o recorte.");
+         ImGui::SetNextItemWidth(-1);
+-        ImGui::SliderFloat("##chromaTol", &state.chromaTolerance, 0.0f, 100.0f, "distância D0 = %.1f%%");
+-        ImGui::TextDisabled("D(z, a) <= D0: pixel vira o fundo. 100%% = distância máxima do RGB.");
+-        ImGui::SetNextItemWidth(-1);
+-        ImGui::SliderFloat("##chromaFeather", &state.chromaFeather, 0.0f, 30.0f, "borda suave = %.1f%%");
++        ImGui::SliderFloat("##chromaFeather", &state.chromaFeather, 0.0f, 45.0f, "borda suave = %.1f°");
+         if (ImGui::Button("Aplicar chroma-key", ImVec2(-1, 0))) {
+             state.applyChromaKey();
+             RefreshTexture(state);
+--- a/tests/color_tests.cpp
++++ b/tests/color_tests.cpp
+@@ -172,22 +172,50 @@
+     back.r().pixel(0, 0) = 7; back.g().pixel(0, 0) = 8; back.b().pixel(0, 0) = 9;
+ 
+     ChromaKeyParams p;
+-    p.tolerance = 0.20;   // D0 ~ 88: pega os dois verdes
++    p.hueTolerance = 20.0;   // pega os dois verdes (matiz ~118 e 120), nao o vermelho/azul
++    p.feather = 0.0;
+     ColorImage out = front;
+     chromaKey(out, back, p);   // fundo 1x1 e ampliado para 2x2
+     check(out.r().pixel(0, 0) == 7 && out.g().pixel(0, 1) == 8 && out.b().pixel(0, 1) == 9, "chroma-key troca os verdes");
+     check(out.r().pixel(1, 0) == 255 && out.b().pixel(1, 1) == 255, "chroma-key mantem as outras cores");
+ 
+-    p.tolerance = 0.0;   // so o verde exato
++    p.hueTolerance = 0.0;   // so o matiz exato
+     out = front;
+     chromaKey(out, back, p);
+     check(out.r().pixel(0, 0) == 7 && out.r().pixel(0, 1) == 20, "tolerancia 0: so o verde exato");
+ 
+-    p.mode = ChromaKeyMode::Cube;
+-    p.tolerance = 0.10;   // meia-largura ~25 por canal: pega (20,235,10)
+-    out = front;
++    // Imune a sombra/brilho: verde escuro e verde claro tem o mesmo matiz
++    ColorImage lum(1, 3);
++    const int lp[3][3] = {{0, 90, 0}, {80, 255, 80}, {128, 128, 128}};
++    for (int k = 0; k < 3; ++k) {
++        lum.r().pixel(0, k) = lp[k][0];
++        lum.g().pixel(0, k) = lp[k][1];
++        lum.b().pixel(0, k) = lp[k][2];
++    }
++    p.hueTolerance = 20.0;
++    out = lum;
++    chromaKey(out, back, p);
++    check(out.r().pixel(0, 0) == 7 && out.r().pixel(0, 1) == 7, "chroma-key ignora a intensidade (sombra e brilho)");
++    check(out.r().pixel(0, 2) == 128, "chroma-key nao remove cinza (matiz indefinido)");
++
++    // Cinza com cor-chave vermelha (H = 0): o cinza tem H = 0 mas nao pode ser removido
++    p.keyR = 255; p.keyG = 0; p.keyB = 0;
++    p.hueTolerance = 30.0;
++    out = lum;
+     chromaKey(out, back, p);
+-    check(out.r().pixel(0, 1) == 7, "modo cubo");
++    check(out.r().pixel(0, 2) == 128, "cinza nunca e confundido com a cor-chave");
++
++    // Borda suave: alpha blending entre D0 e D0 + feather
++    ColorImage edge(1, 1);
++    edge.r().pixel(0, 0) = 0; edge.g().pixel(0, 0) = 255; edge.b().pixel(0, 0) = 0;
++    ColorImage white(1, 1);
++    white.r().pixel(0, 0) = 255; white.g().pixel(0, 0) = 255; white.b().pixel(0, 0) = 255;
++    p = ChromaKeyParams();
++    p.keyR = 0; p.keyG = 200; p.keyB = 100;    // matiz ~ 150: D = 30 em relacao ao verde puro
++    p.hueTolerance = 20.0;
++    p.feather = 20.0;                           // 30 esta no meio da faixa 20..40
++    chromaKey(edge, white, p);
++    check(edge.r().pixel(0, 0) > 100 && edge.r().pixel(0, 0) < 155, "borda suave mistura frente e fundo");
+ }
+ 
+ static void testHistogramsAndMisc() {

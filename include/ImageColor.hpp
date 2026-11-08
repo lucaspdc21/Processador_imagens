@@ -55,30 +55,25 @@ namespace core {
 
     void sepia(ColorImage& img, const SepiaParams& params);
 
-    // ---- Chroma-key ----
-    enum class ChromaKeyMode {
-        Sphere,   // distancia euclidiana no RGB (Eq. 6.7-1)
-        Cube      // distancia de Chebyshev: cubo de meia-largura W/2 (Eq. 6.5-7)
-    };
-
+    // ---- Chroma-key (distancia angular no matiz H do HSI) ----
+    // O pixel e a cor-chave sao comparados so pelo matiz H (angulo, 0..360):
+    //   D(z, a) = min(|Hz - Ha|, 360 - |Hz - Ha|)   em graus, 0..180
+    // O plano I (intensidade) e ignorado, entao sombras e brilhos no fundo
+    // verde nao mudam o resultado. Como H e instavel quando a cor e quase
+    // cinza (S ~ 0) ou quase preta (I ~ 0), esses pixels nunca sao removidos.
     struct ChromaKeyParams {
         int keyR = 0;
         int keyG = 255;
         int keyB = 0;                  // cor-chave a = (0, 255, 0)
-        double tolerance = 0.40;       // D0 em [0, 1]: 1 = distancia maxima possivel
-        double feather = 0.0;          // [0, 1]: largura da borda suave (0 = mascara dura)
-        ChromaKeyMode mode = ChromaKeyMode::Sphere;
+        double hueTolerance = 25.0;    // D0: tolerancia angular do matiz, em graus (0..180)
+        double feather = 5.0;          // borda suave: faixa extra em graus (0 = mascara dura)
     };
 
-    // Distancia maxima no RGB de 8 bits: sqrt(3)*255 (esfera) ou 255 (cubo)
-    double chromaKeyMaxDistance(ChromaKeyMode mode);
-
-    // Substitui os pixels de 'front' proximos da cor-chave pelos pixels de
-    // 'background'. O fundo e redimensionado (bilinear) para o tamanho de
-    // 'front' se for diferente. A frente e alterada no lugar.
-    //   D(z, a) <= D0  -> pixel do fundo
-    //   caso contrario -> pixel da frente
-    // Com feather > 0 a transicao e suave (mistura) entre D0 e D0 + feather.
+    // Substitui os pixels de 'front' cujo matiz esta a ate D0 graus do matiz
+    // da cor-chave pelos pixels de 'background' (redimensionado, bilinear, se
+    // o tamanho for diferente). Entre D0 e D0 + feather o peso do fundo cai
+    // suavemente de 1 a 0 (alpha blending). A frente e alterada no lugar.
+    // Se a cor-chave for cinza (matiz indefinido), nada e alterado.
     void chromaKey(ColorImage& front, ColorImage& background, const ChromaKeyParams& params);
 
     // Media do RGB numa janela (2*radius+1)^2 centrada em (row, col), para
