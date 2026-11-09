@@ -94,6 +94,7 @@ add_executable(processador_gui
     ui/ImageTexture.cpp
     ui/LeftPanel.cpp
     ui/ContrastCurve.cpp
+    ui/TransformCurve.cpp
     ui/CenterPanel.cpp
     ui/RightPanel.cpp
     ui/CompareWindow.cpp

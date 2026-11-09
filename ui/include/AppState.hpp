@@ -36,6 +36,8 @@ namespace ui {
 
         bool logAutoConstant = true;       
         float logConstant = 1.0f;          
+        int logAutoMaxCache = 0;            // maior valor da imagem (cache p/ o grafico da curva log)
+        int logAutoMaxRevision = -1;        // imageRevision em que o cache foi calculado
 
         float gammaValue = 1.0f;           
         float gammaConstant = 1.0f;        
@@ -63,6 +65,9 @@ namespace ui {
         core::ColorHistograms histogramOriginal;
         bool histogramDirty = true;
         bool histogramNormalized = false;   // false: h(rk) = nk | true: p(rk) = nk/MN
+        bool histogramLogScale = false;     // eixo y em log(1 + n): so muda o desenho, nao os dados
+        bool histogramWorkingGray = false;  // R = G = B: um unico histograma basta (calculado em updateHistograms)
+        bool histogramOriginalGray = false;
 
         // Janela de escala e rotacao (operacoes espaciais)
         bool showSpatialWindow = false;
@@ -174,6 +179,10 @@ namespace ui {
         void applyThreshold();
         void applyLogTransform();
         void applyGammaCorrection();
+        // Constante c efetiva da transformacao logaritmica: a do controle ou, no modo
+        // automatico, 255 / ln(1 + maximo) (mesma regra de applyLogTransform). Serve ao
+        // grafico da curva; o maximo fica em cache por imageRevision.
+        double currentLogConstant();
         void applyContrastStretch();
         void applyIntensitySlice();
         void applyBitPlaneSlice();

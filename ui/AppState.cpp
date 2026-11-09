@@ -131,6 +131,16 @@ void AppState::applyGammaCorrection() {
     statusMessage = "Correção de gama aplicada (gama = " + std::to_string(gammaValue) + ").";
 }
 
+double AppState::currentLogConstant() {
+    if (!logAutoConstant) return static_cast<double>(logConstant);
+    if (!hasImage) return 1.0;
+    if (logAutoMaxRevision != imageRevision) {
+        logAutoMaxCache = core::computeStats(workingImage).maxValue;
+        logAutoMaxRevision = imageRevision;
+    }
+    return (logAutoMaxCache <= 0) ? 1.0 : 255.0 / std::log(1.0 + static_cast<double>(logAutoMaxCache));
+}
+
 void AppState::applyContrastStretch() {
     if (!hasImage) return;
     core::applyToPlanes(workingImage, colorTarget(), [&](core::Image& p) {
@@ -345,6 +355,10 @@ void AppState::updateHistograms() {
     if (!hasImage || !histogramDirty) return;
     histogramWorking = core::computeColorHistograms(workingImage);
     histogramOriginal = core::computeColorHistograms(originalImage);
+    // R = G = B => os 4 histogramas (R, G, B e I) sao identicos. Testa so aqui (O(M*N)),
+    // quando a imagem muda, e nao a cada quadro.
+    histogramWorkingGray = workingImage.isGray();
+    histogramOriginalGray = originalImage.isGray();
     histogramDirty = false;
 }
 

@@ -1,16 +1,31 @@
 #include "LeftPanel.hpp"
 #include "ImageTexture.hpp"
 #include "ContrastCurve.hpp"
+#include "TransformCurve.hpp"
 #include "ImageColor.hpp"
 #include "ImageIntensity.hpp"
 #include "imgui.h"
 #include "tinyfiledialogs.h"
+#include <cstdarg>
 #include <cstdio>
 #include <string>
 
 namespace ui {
 
 namespace {
+
+    // Texto de apoio que quebra linha dentro do painel (TextDisabled nao quebra)
+    void DisabledWrapped(const char* fmt, ...) IM_FMTARGS(1);
+    void DisabledWrapped(const char* fmt, ...) {
+        va_list args;
+        va_start(args, fmt);
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextV(fmt, args);
+        ImGui::PopTextWrapPos();
+        ImGui::PopStyleColor();
+        va_end(args);
+    }
 
     // Previa do alargamento de contraste: so a textura exibida muda, a imagem de
     // trabalho (e os histogramas) continuam intactos ate clicar em "Aplicar".
@@ -255,6 +270,14 @@ void RenderLeftPanel(AppState& state, float width, float height) {
         ImGui::SetNextItemWidth(-1);
         ImGui::SliderFloat("##logc", &state.logConstant, 0.1f, 100.0f, "c = %.2f");
         ImGui::EndDisabled();
+        {
+            // Curva s = c * ln(1 + r) com o mesmo c que sera aplicado (passe o mouse sobre o grafico)
+            state.updateHistograms();
+            const double logC = state.currentLogConstant();
+            DisabledWrapped("s = c * ln(1 + r) | c = %.2f%s", logC, state.logAutoConstant ? " (auto)" : "");
+            TransformCurvePlot("##curvaLog", logCurveLut(logC), IM_COL32(255, 200, 70, 255),
+                               &state.histogramWorking.i);
+        }
         if (ImGui::Button("Aplicar transformação logarítmica", ImVec2(-1, 0))) {
             state.applyLogTransform();
             RefreshTexture(state);
@@ -267,6 +290,14 @@ void RenderLeftPanel(AppState& state, float width, float height) {
         ImGui::SetNextItemWidth(-1);
         ImGui::SliderFloat("##gammac", &state.gammaConstant, 0.1f, 3.0f, "c = %.2f");
         ImGui::TextDisabled("gama < 1 clareia | gama > 1 escurece");
+        {
+            // Curva s = 255 * c * (r/255)^gama com os valores dos controles acima
+            state.updateHistograms();
+            DisabledWrapped("s = 255 * c * (r/255)^gama | gama = %.2f, c = %.2f", state.gammaValue, state.gammaConstant);
+            TransformCurvePlot("##curvaGama", gammaCurveLut(static_cast<double>(state.gammaValue),
+                                                            static_cast<double>(state.gammaConstant)),
+                               IM_COL32(90, 210, 190, 255), &state.histogramWorking.i);
+        }
         if (ImGui::Button("Aplicar correção de gama", ImVec2(-1, 0))) {
             state.applyGammaCorrection();
             RefreshTexture(state);

@@ -46,11 +46,13 @@ HistogramStats computeHistogramStats(const Histogram& h) {
     }
     s.stdDev = std::sqrt(s.variance);
 
-    // mediana: primeiro nivel em que a distribuicao acumulada chega a 1/2
-    double cumulative = 0.0;
-    for (size_t i = 0; i < p.size(); ++i) {
-        cumulative += p[i];
-        if (cumulative >= 0.5) {
+    // mediana: primeiro nivel em que a distribuicao acumulada chega a 1/2.
+    // Comparacao em inteiros (2 * soma(nj) >= MN): somar p(rj) em double pode dar um
+    // valor um pouco abaixo de 0,5 num empate exato e pular o nivel correto.
+    long long cumulative = 0;
+    for (size_t i = 0; i < h.counts.size(); ++i) {
+        cumulative += h.counts[i];
+        if (2 * cumulative >= h.totalPixels) {
             s.median = static_cast<int>(i);
             break;
         }
